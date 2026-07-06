@@ -1,12 +1,13 @@
 # 爱啾 Agent Runtime — Demo
 
-基于 [file_framework.md](../ros2_ws/ehr_ros_app/design/file_framework.md)
-+ [gateway_readme.md](../ros2_ws/ehr_ros_app/design/gateway_readme.md)
-+ [IMPLEMENTATION_ROADMAP.md](../ros2_ws/ehr_ros_app/design/IMPLEMENTATION_ROADMAP.md)
+基于 [docs/design/file_framework.md](docs/design/file_framework.md)
++ [docs/design/gateway_readme.md](docs/design/gateway_readme.md)
++ [docs/design/IMPLEMENTATION_ROADMAP.md](docs/design/IMPLEMENTATION_ROADMAP.md)
 的完整分层实现。目标：**证明 Gateway + 三 Runtime + Agent/Skill 分层架构可行，并打通 Python → MQTT → Bridge → ROS2 → 机器人全链路。**
 
 > 📊 **可视化架构图**：[docs/](docs/) — 6 张专业架构图（PNG），适合演示和评审。
 > 📋 **设计差距分析**：[docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) — 逐模块对照设计文档的详细差距审查。
+> 📐 **设计文档**：[docs/design/](docs/design/) — gateway_readme / file_framework / IMPLEMENTATION_ROADMAP 原始设计
 
 ---
 
@@ -285,6 +286,12 @@ InteractionSkill.execute(intent, params)
   ├── "volume"        → send_volume(vol)          → MQTT 5002, eir/setting
   └── "led"           → send_led(rgb, ...)        → MQTT 5001, eir/setting
 ```
+
+### 5.3 调用链路全景（8 步全流程）
+
+![调用链路全景图](docs/images/07_调用链路全景图.png)
+
+> 从用户输入到 MQTT 指令的完整 8 步路由链，含具体代码行号、路径 A/B 分叉、Skill→MQTT 指令映射。建议初次阅读时先看这张图。
 
 ---
 

@@ -557,6 +557,195 @@ def build_layers():
 
 
 # ============================================================================
+# 7. 调用链路全景图 — 从用户输入到 MQTT 的完整路由决策链
+# ============================================================================
+def build_call_chain():
+    dot = Digraph(comment="Complete Call Chain")
+    style_graph(dot, "调用链路全景图 — 从用户输入到 MQTT 指令")
+
+    # ------------------------------------------------------------------
+    # 第一段: 用户输入
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_input") as c:
+        c.attr(label="① 用户输入", style="filled", fillcolor="#161B22",
+               fontcolor=C_TITLE, fontsize="13", color=C_GATEWAY)
+        c.node("txt", "用户文本", shape="plaintext", fontcolor=C_TEXT, fontsize="12")
+
+    # ------------------------------------------------------------------
+    # 第二段: Gateway
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_step1") as c:
+        c.attr(label="② Gateway.handle_text()", style="filled", fillcolor="#161B22",
+               fontcolor=C_GATEWAY, fontsize="13", color=C_GATEWAY)
+        c.node("gw_encap", "封装 RuntimeMessage\n{payload: {text: ...}, context: {}}", shape="box", fillcolor=C_GATEWAY)
+        c.node("gw_call", "Router.route(message)", shape="box", fillcolor=C_GATEWAY)
+
+    # ------------------------------------------------------------------
+    # 第三段: Router 扫描 DIRECT_ROUTES
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_router") as c:
+        c.attr(label="③ Router 扫描 DIRECT_ROUTES 关键词表", style="filled", fillcolor="#161B22",
+               fontcolor=C_TITLE, fontsize="13", color=C_TITLE)
+
+        # 两个分支: 命中 vs 未命中
+        c.node("rt_scan", "遍历 50 条关键词\n最长匹配原则", shape="box", fillcolor=C_GATEWAY)
+        c.node("rt_hit", "✅ 命中！\n→ 写 message.context\n  {action, params}\n→ 返回 runtime 名", shape="box", fillcolor="#238636")
+        c.node("rt_miss", "❌ 未命中\n→ 返回 \"interaction\"", shape="box", fillcolor="#C2255C")
+
+        # 具体示例
+        c.node("rt_ex1", '"cqm1" → motion\naction=motion, name=cqm1', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="9")
+        c.node("rt_ex2", '"停" → motion\naction=stop', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="9")
+        c.node("rt_ex3", '"四川话" → interaction\naction=play_audio, name=sch1', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="9")
+        c.node("rt_ex4", '"带我去" → navigation\naction=navigate', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="9")
+        c.node("rt_ex5", '"你好" → LLM 路径', shape="note", fillcolor="#2D0B15", fontcolor=C_SKILL, fontsize="9")
+        c.node("rt_ex6", '"介绍一下爱湫" → LLM 路径', shape="note", fillcolor="#2D0B15", fontcolor=C_SKILL, fontsize="9")
+
+    # ------------------------------------------------------------------
+    # 第四段: Gateway 选 Runtime
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_dispatch") as c:
+        c.attr(label="④ Gateway 查 _runtimes 字典", style="filled", fillcolor="#161B22",
+               fontcolor=C_GATEWAY, fontsize="13", color=C_GATEWAY)
+        c.node("gw_dict", '{\n  "interaction": InteractionRuntime,\n  "motion": MotionRuntime,\n  "navigation": NavigationRuntime\n}', shape="note", fillcolor="#161B22", fontcolor=C_ARROW, fontsize="9")
+        c.node("gw_disp", "runtime.handle(message)", shape="box", fillcolor=C_GATEWAY)
+
+    # ------------------------------------------------------------------
+    # 第五段: 三个 Runtime 内部逻辑
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_runtimes_detail") as c:
+        c.attr(label="⑤ Runtime 内部 dispatch（按 message.context 分发）", style="filled", fillcolor="#161B22",
+               fontcolor=C_RUNTIME, fontsize="13", color=C_RUNTIME)
+
+        # InteractionRuntime
+        c.node("irt_label", "InteractionRuntime", shape="plaintext", fontcolor=C_RUNTIME, fontsize="11")
+        c.node("irt_check", 'context["action"] 有值?', shape="diamond", fillcolor=C_AGENT, fontsize="9")
+        c.node("irt_direct", "直接执行 InteractionSkill\n(play_audio/switch_emotion/\nvoice_wakeup/volume/led)", shape="box", fillcolor=C_SKILL)
+        c.node("irt_llm", "调 IntentAgent (LLM)", shape="box", fillcolor=C_AGENT)
+        c.node("irt_llm_out", "LLM 返回:\nchat→DialogueAgent\ninteraction→InteractionSkill\nmotion/nav→回Gateway二次路由", shape="box", fillcolor=C_AGENT, fontsize="9")
+
+        # MotionRuntime
+        c.node("mrt_label", "MotionRuntime", shape="plaintext", fontcolor=C_RUNTIME, fontsize="11")
+        c.node("mrt_disp", "→ MotionAgent\n→ MotionSkill", shape="box", fillcolor=C_RUNTIME, fontsize="9")
+
+        # NavigationRuntime
+        c.node("nrt_label", "NavigationRuntime", shape="plaintext", fontcolor=C_RUNTIME, fontsize="11")
+        c.node("nrt_disp", "→ NavigationAgent\n→ NavigationSkill", shape="box", fillcolor=C_RUNTIME, fontsize="9")
+
+    # ------------------------------------------------------------------
+    # 第六段: Gateway 二次路由
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_reroute") as c:
+        c.attr(label="⑥ Gateway 二次路由（仅当 Interaction → motion/navigation）",
+               style="filled", fillcolor="#161B22",
+               fontcolor=C_TITLE, fontsize="12", color=C_TITLE)
+        c.node("reroute", 'if runtime_name == "interaction"\nand result.intent in ("motion", "navigation"):\n    更新 message.context → 分发到对应 Runtime', shape="box", fillcolor=C_GATEWAY, fontsize="9")
+
+    # ------------------------------------------------------------------
+    # 第七段: Skill → MQTT 映射
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_skill_mqtt") as c:
+        c.attr(label="⑦ Skill.execute() — 按 params[\"action\"] 分发 MQTT 指令",
+               style="filled", fillcolor="#161B22",
+               fontcolor=C_SKILL, fontsize="13", color=C_SKILL)
+
+        c.node("sk_motion", "MotionSkill", shape="plaintext", fontcolor=C_SKILL, fontsize="10")
+        c.node("sk_int", "InteractionSkill", shape="plaintext", fontcolor=C_SKILL, fontsize="10")
+        c.node("sk_nav", "NavigationSkill", shape="plaintext", fontcolor=C_SKILL, fontsize="10")
+
+        c.node("sk_t1", 'action="motion"\n→ CMD_ACTION(1006)\n   eir/operation_instructions\n   机器人执行动作', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t2", 'action="move"\n→ CMD_MOVE(3001)\n   eir/operation_move2\n   机器人移动', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t3", 'action="stop"\n→ CMD_SOFT_ESTOP(9000)\n   eir/soft_emergency_stop\n   机器人急停', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t4", 'action="loco_mode"\n→ CMD_LOCO_MODE(1001)\n   站立/趴下/起身/小跑', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t5", 'action="oas"\n→ CMD_OAS(1004)\n   避障开关', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t6", 'action="play_audio"\n→ CMD_CORPUS(1007)\n   eir/general_interface\n   播放音频', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t7", 'action="switch_emotion"\n→ CMD_CORPUS(1007)\n   随机切换情绪', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t8", 'action="volume"\n→ CMD_SETTING(5002)\n   eir/setting\n   设置音量', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+        c.node("sk_t9", 'action="navigate"\n→ CMD_NAVIGATION(6001)\n   eir/slam_navigation\n   启动导航', shape="note", fillcolor="#0D2B15", fontcolor=C_RUNTIME, fontsize="8")
+
+    # ------------------------------------------------------------------
+    # 第八段: Bridge + 机器人
+    # ------------------------------------------------------------------
+    with dot.subgraph(name="cluster_final") as c:
+        c.attr(label="⑧ 机器人执行", style="filled", fillcolor="#161B22",
+               fontcolor=C_BRIDGE, fontsize="13", color=C_BRIDGE)
+        c.node("bridge_f", "eir_communication_bridge\nMQTT → ROS2 topic 透明中继", shape="box", fillcolor=C_BRIDGE)
+        c.node("robot_f", "ehr_ros_app → ehr_app_core\n动作/导航/语音/表情 执行", shape="box", fillcolor=C_ROBOT)
+
+    # ==================================================================
+    # EDGES
+    # ==================================================================
+
+    # ① → ②
+    dot.edge("txt", "gw_encap", "文本", color=C_ARROW)
+    dot.edge("gw_encap", "gw_call", color=C_ARROW)
+
+    # ② → ③
+    dot.edge("gw_call", "rt_scan", "传入 message", color=C_ARROW)
+
+    # ③ 内部分支
+    dot.edge("rt_scan", "rt_hit", "关键词匹配", color=C_RUNTIME)
+    dot.edge("rt_scan", "rt_miss", "无匹配", color=C_CAP, style="dashed")
+    dot.edge("rt_hit", "rt_ex1", style="dashed", color=C_ARROW)
+    dot.edge("rt_hit", "rt_ex2", style="dashed", color=C_ARROW)
+    dot.edge("rt_hit", "rt_ex3", style="dashed", color=C_ARROW)
+    dot.edge("rt_hit", "rt_ex4", style="dashed", color=C_ARROW)
+    dot.edge("rt_miss", "rt_ex5", style="dashed", color=C_ARROW)
+    dot.edge("rt_miss", "rt_ex6", style="dashed", color=C_ARROW)
+
+    # ③ → ④
+    dot.edge("rt_hit", "gw_dict", '返回 "motion" / "interaction" / "navigation"', color=C_GATEWAY)
+    dot.edge("rt_miss", "gw_dict", '返回 "interaction"', color=C_GATEWAY, style="dashed")
+    dot.edge("gw_dict", "gw_disp", color=C_ARROW)
+
+    # ④ → ⑤
+    dot.edge("gw_disp", "irt_check", "→ interaction", color=C_RUNTIME)
+    dot.edge("gw_disp", "mrt_disp", "→ motion", color=C_RUNTIME)
+    dot.edge("gw_disp", "nrt_disp", "→ navigation", color=C_RUNTIME)
+
+    # ⑤ 内部: InteractionRuntime
+    dot.edge("irt_check", "irt_direct", "有值 (关键词命中)", color=C_SKILL)
+    dot.edge("irt_check", "irt_llm", "空 (无关键词)", color=C_AGENT)
+    dot.edge("irt_llm", "irt_llm_out", "LLM 返回意图", color=C_AGENT)
+
+    # ⑤ → ⑥ 二次路由
+    dot.edge("irt_llm_out", "reroute", "intent=motion/nav", color=C_GATEWAY)
+    dot.edge("reroute", "mrt_disp", "→ motion Runtime", color=C_GATEWAY, style="dashed")
+    dot.edge("reroute", "nrt_disp", "→ navigation Runtime", color=C_GATEWAY, style="dashed")
+
+    # ⑤ → ⑦
+    dot.edge("irt_direct", "sk_int", color=C_SKILL)
+    dot.edge("mrt_disp", "sk_motion", color=C_SKILL)
+    dot.edge("nrt_disp", "sk_nav", color=C_SKILL)
+
+    # ⑦ 内部分支
+    dot.edge("sk_motion", "sk_t1", style="dashed", color=C_ARROW)
+    dot.edge("sk_motion", "sk_t2", style="dashed", color=C_ARROW)
+    dot.edge("sk_motion", "sk_t3", style="dashed", color=C_ARROW)
+    dot.edge("sk_motion", "sk_t4", style="dashed", color=C_ARROW)
+    dot.edge("sk_motion", "sk_t5", style="dashed", color=C_ARROW)
+    dot.edge("sk_int", "sk_t6", style="dashed", color=C_ARROW)
+    dot.edge("sk_int", "sk_t7", style="dashed", color=C_ARROW)
+    dot.edge("sk_int", "sk_t8", style="dashed", color=C_ARROW)
+    dot.edge("sk_nav", "sk_t9", style="dashed", color=C_ARROW)
+
+    # ⑦ → ⑧
+    dot.edge("sk_t1", "bridge_f", "MQTT", color=C_ARROW)
+    dot.edge("sk_t2", "bridge_f", "MQTT", color=C_ARROW)
+    dot.edge("sk_t3", "bridge_f", "MQTT", color=C_ARROW)
+    dot.edge("sk_t6", "bridge_f", "MQTT", color=C_ARROW)
+    dot.edge("sk_t9", "bridge_f", "MQTT", color=C_ARROW)
+    dot.edge("bridge_f", "robot_f", "ROS2", color=C_ARROW)
+
+    # 路径标注
+    dot.node("pathA", "🟠 路径 A (右): 关键词命中 → 免 LLM, < 1ms\n   例: cqm1/停/四川话/带我去", shape="plaintext", fontcolor=C_SKILL, fontsize="10")
+    dot.node("pathB", "🟡 路径 B (左): 无关键词 → LLM 意图理解 → 二次路由, ~100-500ms\n   例: 你好/介绍一下爱湫/往前走", shape="plaintext", fontcolor=C_LLM, fontsize="10")
+
+    style_legend(dot)
+    dot.render(os.path.join(OUT_DIR, "07_调用链路全景图"), format="png", cleanup=True)
+    print("✓ 07_调用链路全景图.png")
+
+
+# ============================================================================
 if __name__ == "__main__":
     build_architecture()
     build_request_flow()
@@ -564,4 +753,5 @@ if __name__ == "__main__":
     build_module_deps()
     build_sequence()
     build_layers()
+    build_call_chain()
     print(f"\n全部图表已生成到: {OUT_DIR}/")
