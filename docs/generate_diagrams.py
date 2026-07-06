@@ -154,8 +154,8 @@ def build_architecture():
     dot.edge("ds_sk", "llm", "调LLM", color=C_LLM, style="dashed")
 
     style_legend(dot)
-    dot.render(os.path.join(OUT_DIR, "01_architecture_overview"), format="png", cleanup=True)
-    print("✓ 01_architecture_overview.png")
+    dot.render(os.path.join(OUT_DIR, "01_系统架构总览"), format="png", cleanup=True)
+    print("✓ 01_系统架构总览.png")
 
 
 # ============================================================================
@@ -226,8 +226,8 @@ def build_request_flow():
     dot.edge("b_llm", "note_b", style="invis")
 
     style_legend(dot)
-    dot.render(os.path.join(OUT_DIR, "02_request_flow"), format="png", cleanup=True)
-    print("✓ 02_request_flow.png")
+    dot.render(os.path.join(OUT_DIR, "02_请求处理流程"), format="png", cleanup=True)
+    print("✓ 02_请求处理流程.png")
 
 
 # ============================================================================
@@ -327,8 +327,8 @@ def build_routing_tree():
     dot.edge("mqtt", "bridge")
 
     style_legend(dot)
-    dot.render(os.path.join(OUT_DIR, "03_routing_decision_tree"), format="png", cleanup=True)
-    print("✓ 03_routing_decision_tree.png")
+    dot.render(os.path.join(OUT_DIR, "03_路由决策树"), format="png", cleanup=True)
+    print("✓ 03_路由决策树.png")
 
 
 # ============================================================================
@@ -418,8 +418,8 @@ def build_module_deps():
     dot.edge("base", "iag", style="dotted", color=C_ARROW)
 
     style_legend(dot)
-    dot.render(os.path.join(OUT_DIR, "04_module_dependencies"), format="png", cleanup=True)
-    print("✓ 04_module_dependencies.png")
+    dot.render(os.path.join(OUT_DIR, "04_模块依赖关系"), format="png", cleanup=True)
+    print("✓ 04_模块依赖关系.png")
 
 
 # ============================================================================
@@ -459,8 +459,8 @@ def build_sequence():
     dot.attr(rank="same")
     # just render
 
-    dot.render(os.path.join(OUT_DIR, "05_sequence_cqm1"), format="png", cleanup=True)
-    print("✓ 05_sequence_cqm1.png")
+    dot.render(os.path.join(OUT_DIR, "05_端到端时序图"), format="png", cleanup=True)
+    print("✓ 05_端到端时序图.png")
 
 
 # ============================================================================
@@ -552,8 +552,8 @@ def build_layers():
              fillcolor="#161B22", fontcolor=C_ARROW, fontsize="9")
 
     style_legend(dot)
-    dot.render(os.path.join(OUT_DIR, "06_layered_architecture"), format="png", cleanup=True)
-    print("✓ 06_layered_architecture.png")
+    dot.render(os.path.join(OUT_DIR, "06_五层架构垂直切面"), format="png", cleanup=True)
+    print("✓ 06_五层架构垂直切面.png")
 
 
 # ============================================================================

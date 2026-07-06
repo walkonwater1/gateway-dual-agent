@@ -5,6 +5,8 @@
 + [IMPLEMENTATION_ROADMAP.md](../ros2_ws/ehr_ros_app/design/IMPLEMENTATION_ROADMAP.md)
 的完整分层实现。目标：**证明 Gateway + 三 Runtime + Agent/Skill 分层架构可行，并打通 Python → MQTT → Bridge → ROS2 → 机器人全链路。**
 
+> 📊 **可视化架构图**：[docs/](docs/) — 6 张专业架构图（PNG），适合演示和评审。
+
 ---
 
 ## 目录
@@ -26,63 +28,7 @@
 
 ## 1. 架构总览
 
-```
-用户输入 "cqm1"
-       │
-       ▼
-┌──────────────────────────────────────────────────────────┐
-│  Gateway (gateway/)                                       │
-│  ├── handle_text()     ← 统一入口，封装 RuntimeMessage    │
-│  └── Router            ← 关键词命中 → 直连 Runtime        │
-│       │                   未命中      → Interaction (LLM)  │
-│       │                                                   │
-│       ├── 关键词命中 "cqm1" → Motion Runtime  (零 LLM)    │
-│       ├── 关键词命中 "前进" → Motion Runtime               │
-│       ├── 关键词命中 "停"   → Motion Runtime               │
-│       ├── 关键词命中 "导航" → Navigation Runtime           │
-│       └── 未命中            → Interaction Runtime (LLM)    │
-└──────────────────────────────────────────────────────────┘
-       │
-       ├──────────────┬──────────────┬──────────────┐
-       ▼              ▼              ▼              ▼
-┌──────────┐ ┌──────────┐ ┌──────────────┐
-│Interaction│ │  Motion  │ │  Navigation  │  ← Runtimes (runtimes/)
-│ Runtime  │ │  Runtime │ │   Runtime    │     编排所属 Agent
-│          │ │          │ │  (占位)      │
-│ Intent   │ │ Motion   │ │ Navigation  │
-│ Agent    │ │ Agent    │ │ Agent       │
-│ Dialogue │ │          │ │             │
-│ Agent    │ │          │ │             │
-└────┬─────┘ └────┬─────┘ └──────┬──────┘  ← Agents (agents/)
-     │            │              │            决策：调 LLM、选动作、定参数
-     ▼            ▼              ▼
-┌──────────┐ ┌──────────┐ ┌──────────────┐
-│Dialogue  │ │ Motion   │ │ Navigation   │  ← Skills (skills/)
-│Skill     │ │ Skill    │ │ Skill        │     执行：发 MQTT 指令
-│(LLM对话) │ │(MQTT指令)│ │ (MQTT指令)   │
-└────┬─────┘ └────┬─────┘ └──────┬──────┘
-     │            │              │
-     └────────────┼──────────────┘
-                  ▼
-     ┌──────────────────────┐
-     │  RobotMqttClient     │  ← Capabilities (capabilities/)
-     │  paho-mqtt 封装      │     协议适配，不含业务逻辑
-     └──────────────────────┘
-                  │ MQTT (mosquitto:8899)
-                  ▼
-     ┌──────────────────────┐
-     │  eir_communication   │  ← Bridge (C++ ROS2 Node)
-     │  _bridge             │     MQTT ↔ ROS2 透明中继
-     └──────────────────────┘
-                  │ ROS2 topics
-                  ▼
-     ┌──────────────────────┐
-     │  ehr_ros_app +       │  ← 机器人主控 (Orin)
-     │  ehr_app_core        │     执行层
-     └──────────────────────┘
-```
-
----
+![系统架构总览](docs/images/01_系统架构总览.png)
 
 ## 2. 分层设计
 
@@ -97,83 +43,19 @@
 
 > **核心原则：Agent 负责"用户想做什么"，Skill 负责"怎么让机器人做"。Gateway 是薄中枢，只路由不决策。**
 
+![五层架构垂直切面](docs/images/06_五层架构垂直切面.png)
+
 ---
 
 ## 3. 调用关系图
 
 ### 3.1 模块依赖关系
 
-```
-                                  ┌─────────────────────┐
-                                  │       main.py        │
-                                  │  DI 组装 + 启动入口   │
-                                  └──────────┬──────────┘
-                                             │ 注入依赖
-               ┌─────────────────────────────┼──────────────────────────┐
-               ▼                             ▼                          ▼
-  ┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
-  │   InteractionRuntime   │  │     MotionRuntime      │  │   NavigationRuntime    │
-  │   runtimes/            │  │   runtimes/            │  │   runtimes/            │
-  │                        │  │                        │  │                        │
-  │  _intent_agent ────────┤  │  _motion_agent ────────┤  │  _nav_agent ───────────┤
-  │       │                │  │       │                │  │       │                │
-  │  _dialogue_agent ──────┤  │       ▼                │  │       ▼                │
-  │       │                │  │  MotionSkill            │  │  NavigationSkill        │
-  │  _skill ───────────────┤  │       │                │  │       │                │
-  │       │                │  │       ▼                │  │       ▼                │
-  └───────┼────────────────┘  └───────┼────────────────┘  └───────┼────────────────┘
-          │                           │                           │
-          │     ┌─────────────────────┼───────────────────────────┤
-          │     │                     │                           │
-          ▼     ▼                     ▼                           ▼
-  ┌───────────────┐    ┌─────────────────────────────────────────────┐
-  │  Gateway      │    │              RobotMqttClient                │
-  │  gateway/     │    │              capabilities/                  │
-  │               │    │                                             │
-  │  _router ─────┼────┤  send_motion()  send_move()  send_estop()  │
-  │  _runtimes {} │    │  send_volume()  send_led()  send_corpus()  │
-  │               │    │  send_navigation()  ...                    │
-  └───────────────┘    └──────────────────────────┬──────────────────┘
-                                                  │ MQTT
-                                                  ▼
-                                        ┌──────────────────┐
-                                        │  Bridge (C++)    │
-                                        │  MQTT ↔ ROS2     │
-                                        └──────────────────┘
-```
+![模块依赖关系](docs/images/04_模块依赖关系.png)
 
 ### 3.2 Gateway → 三 Runtime 路由关系
 
-```
-                        ┌─────────────┐
-                        │   Gateway   │
-                        │ handle_text │
-                        └──────┬──────┘
-                               │
-                        ┌──────▼──────┐
-                        │   Router    │
-                        │  .route()   │
-                        └──────┬──────┘
-                               │
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-   ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
-   │  "interaction"  │ │  "motion"   │ │  "navigation"   │
-   │  (默认 / LLM)   │ │  (关键词)   │ │  (关键词)       │
-   └────────┬────────┘ └──────┬──────┘ └────────┬────────┘
-            │                 │                  │
-   ┌────────▼────────┐ ┌──────▼──────┐ ┌────────▼────────┐
-   │InteractionRuntime│ │MotionRuntime│ │NavigationRuntime│
-   │                  │ │             │ │   (占位)        │
-   │ 两条路径:         │ │ MotionAgent │ │ NavigationAgent │
-   │ ①直接Skill执行    │ │     │       │ │     │           │
-   │ ②LLM→IntentAgent │ │ MotionSkill  │ │ NavigationSkill │
-   │     │             │ │     │       │ │     │           │
-   │ ①DialogueSkill   │ │ send_motion │ │ send_navigation │
-   │ ②InteractionSkill│ │ send_move   │ │                 │
-   └──────────────────┘ │ send_estop  │ └─────────────────┘
-                         └─────────────┘
-```
+![请求处理流程](docs/images/02_请求处理流程.png)
 
 ---
 
@@ -303,6 +185,8 @@ class RuntimeResult:
   耗时: < 1ms (无 LLM)
 ```
 
+![端到端时序图](docs/images/05_端到端时序图.png)
+
 ### 4.4 路径 B：LLM 意图理解 + 二次路由（以 `帮我做个欢迎动作` 为例）
 
 ```
@@ -370,85 +254,7 @@ class RuntimeResult:
 
 ### 5.1 决策树（从输入到 MQTT 指令）
 
-```
-                              用户输入文本
-                                    │
-                                    ▼
-                          ┌─────────────────┐
-                          │  Router.route() │
-                          │ 关键词最长匹配     │
-                          └────────┬────────┘
-                                   │
-                    ┌──────────────┼──────────────┐
-                    │ 命中          │ 未命中         │
-                    ▼              ▼              │
-           ┌──────────────┐  ┌──────────────┐     │
-           │ 写 context:  │  │ 无预填        │     │
-           │ action="x"   │  │ 默认 →        │     │
-           │ params={...} │  │ interaction   │     │
-           └──────┬───────┘  └──────┬───────┘     │
-                  │                 │              │
-    ┌─────────────┼─────────┐       │              │
-    │             │         │       ▼              │
-    ▼             ▼         ▼  ┌──────────────────────┐
-  motion    interaction  navigation  │ InteractionRuntime   │
-    │             │         │  │ handle(message)       │
-    │             │         │  │                       │
-    │             │         │  │ context["action"]? ───┤
-    │             │         │  │   │                   │
-    │             │         │  │  有 → 直接Skill执行   │
-    │             │         │  │   │  (play_audio/     │
-    │             │         │  │   │   switch_emotion/ │
-    │             │         │  │   │   voice_wakeup/   │
-    │             │         │  │   │   volume/led)     │
-    │             │         │  │   │                   │
-    │             │         │  │  无 → IntentAgent     │
-    │             │         │  │       LLM 意图识别    │
-    │             │         │  │         │             │
-    │             │         │  │   ┌─────┼──────┐      │
-    │             │         │  │   ▼     ▼      ▼      │
-    │             │         │  │ chat motion navigation│
-    │             │         │  │   │     │      │      │
-    │             │         │  │   ▼     ▼      ▼      │
-    │             │         │  │Dialogue 返回   返回    │
-    │             │         │  │Agent  Gateway Gateway │
-    │             │         │  │  │  (二次路由)(二次路由)│
-    │             │         │  └──┼──────┼──────┼──────┘
-    │             │         │     │      │      │
-    └─────────────┼─────────┘     │      │      │
-                  └───────────────┼──────┼──────┘
-                                  │      │
-                        ┌─────────┘      └──────────┐
-                        ▼                           ▼
-                  ┌───────────┐             ┌───────────────┐
-                  │  Motion   │             │  Navigation   │
-                  │  Runtime  │             │  Runtime      │
-                  │     │     │             │     │         │
-                  │  Motion  │             │  Navigation   │
-                  │  Agent   │             │  Agent        │
-                  │     │     │             │     │         │
-                  │  Motion  │             │  Navigation   │
-                  │  Skill   │             │  Skill        │
-                  └────┬─────┘             └──────┬────────┘
-                       │                          │
-            ┌──────────┼──────────┐               │
-            ▼          ▼          ▼               ▼
-       send_motion  send_move send_estop   send_navigation
-       (1006)       (3001)    (9000)       (6001)
-            │          │          │               │
-            └──────────┼──────────┼───────────────┘
-                       ▼          ▼
-              ┌─────────────────────────────┐
-              │      RobotMqttClient        │
-              │  publish(topic, payload)    │
-              └─────────────┬───────────────┘
-                            │ MQTT
-                            ▼
-                     ┌────────────┐
-                     │   Bridge   │
-                     │ MQTT↔ROS2  │
-                     └────────────┘
-```
+![路由决策树](docs/images/03_路由决策树.png)
 
 ### 5.2 Skill 内部分发（if/elif 路由）
 
