@@ -11,17 +11,18 @@ Agent Runtime — 启动入口。
     用户输入
       → Gateway (路由中枢)
         → Router (关键词 / LLM 路由)
-          → Interaction Runtime (对话 / 意图理解)
+          → Interaction Runtime (意图理解 → MQTT 指令)
           → Motion Runtime     (动作 / 移动 / 急停)
           → Navigation Runtime (导航 / 建图 / 定位)
-            → Agent  (决策)
+            → Agent  (决策：IntentAgent 调 LLM 做意图→MQTT映射)
               → Skill (执行 → MQTT → Bridge → 机器人)
 
 各层职责:
     Gateway:  接收、标准化、路由、二次分发
     Runtime:  编排所属 Agent
-    Agent:    决策（调 LLM、选动作）
+    Agent:    决策（调 LLM 做意图→MQTT映射）
     Skill:    执行（发 MQTT 指令）
+    🤖 对话：机器人本地 SDK 内腾讯云端大模型处理（Agent 层不重复实现）
 """
 
 import logging
@@ -39,14 +40,12 @@ from capabilities.mqtt_client import RobotMqttClient
 
 # Skills
 from skills.motion_skill import MotionSkill
-from skills.dialogue_skill import DialogueSkill
 from skills.navigation_skill import NavigationSkill
 from skills.interaction_skill import InteractionSkill
 
 # Agents
 from agents.intent_agent import IntentAgent
 from agents.motion_agent import MotionAgent
-from agents.dialogue_agent import DialogueAgent
 from agents.navigation_agent import NavigationAgent
 
 # Runtimes
@@ -87,18 +86,16 @@ def build_app(cfg: dict):
 
     # --- Skills ---
     motion_skill = MotionSkill(mqtt)
-    dialogue_skill = DialogueSkill(llm, model)
     nav_skill = NavigationSkill(mqtt)
     interaction_skill = InteractionSkill(mqtt)
 
     # --- Agents ---
     intent_agent = IntentAgent(llm, model, temperature=0.1)
     motion_agent = MotionAgent(motion_skill)
-    dialogue_agent = DialogueAgent(dialogue_skill)
     nav_agent = NavigationAgent(nav_skill)
 
     # --- Runtimes ---
-    interaction_rt = InteractionRuntime(intent_agent, dialogue_agent, interaction_skill)
+    interaction_rt = InteractionRuntime(intent_agent, interaction_skill)
     motion_rt = MotionRuntime(motion_agent)
     navigation_rt = NavigationRuntime(nav_agent)
 
@@ -141,9 +138,6 @@ DEMO_MENU = [
     # --- 设置 ---
     ("🔉 音量 80",         "音量80",    "设置音量为80"),
     ("💡 氛围灯",          "氛围灯",    "设置氛围灯"),
-    # --- 对话 ---
-    ("💬 对话: 你好",      "你好",      "LLM 对话测试"),
-    ("💬 对话: 你是谁",    "你是谁",    "LLM 对话测试"),
     # --- 导航 ---
     ("🗺️  导航: 去充电站", "带我去充电站", "导航任务下发"),
 ]

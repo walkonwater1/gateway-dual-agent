@@ -97,7 +97,7 @@ def build_architecture():
     with dot.subgraph(name="cluster_runtimes") as c:
         c.attr(label="Runtimes 编排层", style="rounded,dashed",
                fontcolor=C_RUNTIME, fontsize="13", color=C_RUNTIME, bgcolor="#161B22")
-        c.node("irt", "InteractionRuntime\n────\n对话 + LLM意图理解\n[两条路径]", shape="box", fillcolor=C_RUNTIME)
+        c.node("irt", "InteractionRuntime\n────\nLLM意图理解→MQTT指令\n[两条路径]", shape="box", fillcolor=C_RUNTIME)
         c.node("mrt", "MotionRuntime\n────\n动作/移动/急停\n运动模式", shape="box", fillcolor=C_RUNTIME)
         c.node("nrt", "NavigationRuntime\n────\n导航/建图\n(占位)", shape="box", fillcolor=C_RUNTIME)
 
@@ -106,7 +106,6 @@ def build_architecture():
         c.attr(label="Agents 决策层", style="rounded,dashed",
                fontcolor=C_AGENT, fontsize="13", color=C_AGENT, bgcolor="#161B22")
         c.node("ia", "IntentAgent\nLLM意图识别", shape="box", fillcolor=C_AGENT)
-        c.node("da", "DialogueAgent\n纯对话", shape="box", fillcolor=C_AGENT)
         c.node("ma", "MotionAgent\n运动决策", shape="box", fillcolor=C_AGENT)
         c.node("na", "NavigationAgent\n导航决策", shape="box", fillcolor=C_AGENT)
 
@@ -115,7 +114,6 @@ def build_architecture():
         c.attr(label="Skills 执行层", style="rounded,dashed",
                fontcolor=C_SKILL, fontsize="13", color=C_SKILL, bgcolor="#161B22")
         c.node("is_sk", "InteractionSkill\n音频/情绪/语音唤醒", shape="box", fillcolor=C_SKILL)
-        c.node("ds_sk", "DialogueSkill\nLLM对话", shape="box", fillcolor=C_SKILL)
         c.node("ms_sk", "MotionSkill\n动作/移动/急停/模式", shape="box", fillcolor=C_SKILL)
         c.node("ns_sk", "NavigationSkill\n导航MQTT", shape="box", fillcolor=C_SKILL)
 
@@ -133,25 +131,23 @@ def build_architecture():
     dot.edge("gw", "mrt", "关键词命中 →", color=C_ARROW)
     dot.edge("gw", "nrt", "关键词命中 →", color=C_ARROW)
     dot.edge("irt", "ia", color=C_AGENT, style="dashed")
-    dot.edge("irt", "da", color=C_AGENT, style="dashed")
-    dot.edge("ia", "da", "chat →", color=C_AGENT)
     dot.edge("mrt", "ma", color=C_AGENT, style="dashed")
     dot.edge("nrt", "na", color=C_AGENT, style="dashed")
     dot.edge("ma", "ms_sk", color=C_SKILL)
     dot.edge("na", "ns_sk", color=C_SKILL)
-    dot.edge("da", "ds_sk", color=C_SKILL)
     dot.edge("irt", "is_sk", "直接执行 →", color=C_SKILL)
     dot.edge("ms_sk", "mqtt", color=C_CAP)
     dot.edge("ns_sk", "mqtt", color=C_CAP)
     dot.edge("is_sk", "mqtt", color=C_CAP)
-    dot.edge("ds_sk", "mqtt", color=C_CAP, style="dotted", label="(不经过MQTT)")
     dot.edge("mqtt", "bridge", "MQTT (mosquitto:8899)", color=C_ARROW)
     dot.edge("bridge", "robot", "ROS2 topics", color=C_ARROW)
 
-    # LLM 标注
-    dot.node("llm", "🤖 LLM\nqwen2.5:0.5b\n(ollama)", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
-    dot.edge("ia", "llm", "调LLM", color=C_LLM, style="dashed")
-    dot.edge("ds_sk", "llm", "调LLM", color=C_LLM, style="dashed")
+    # LLM 标注（仅 IntentAgent 调用，做意图→MQTT指令映射）
+    dot.node("llm", "🤖 LLM (意图识别)\nqwen2.5:0.5b\n(ollama)", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
+    dot.edge("ia", "llm", "意图→MQTT映射", color=C_LLM, style="dashed")
+    # 对话由机器人本地腾讯大模型处理
+    dot.node("tencent_note", "🗣️ 机器人本地语音\n  腾讯云端大模型\n  (对话/ASR/TTS)\n  SDK内部闭环", shape="note",
+             fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
 
     style_legend(dot)
     dot.render(os.path.join(OUT_DIR, "01_系统架构总览"), format="png", cleanup=True)
@@ -187,7 +183,7 @@ def build_request_flow():
     dot.node("b_llm", "LLM\nqwen2.5:0.5b", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
     dot.node("b_result", "LLM 返回 JSON\n{intent, action, params}", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
     dot.node("b_split", "intent?", shape="diamond", fillcolor=C_AGENT, fontcolor=C_TEXT)
-    dot.node("b_chat", "DialogueAgent\n→ LLM 回复", shape="box", fillcolor=C_AGENT)
+    dot.node("b_chat", "机器人本地语音\n(腾讯云端大模型)", shape="note", fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
     dot.node("b_motion", "→ Gateway._reroute()\n→ MotionRuntime", shape="box", fillcolor=C_HIGHLIGHT)
 
     # MQTT
@@ -215,7 +211,7 @@ def build_request_flow():
     dot.edge("b_split", "b_chat", "chat", color=C_AGENT)
     dot.edge("b_split", "b_motion", "motion/nav", color=C_HIGHLIGHT)
     dot.edge("b_motion", "a_rt", "二次路由到\n同一 Runtime", color=C_HIGHLIGHT, style="dashed")
-    dot.edge("b_chat", "mqtt", style="dotted", label="(不经过MQTT)")
+    dot.edge("b_chat", "b_rt", style="dashed", color=C_HIGHLIGHT, label="SDK内部闭环")
 
     dot.edge("mqtt", "bridge", "MQTT")
 
@@ -266,7 +262,7 @@ def build_routing_tree():
 
     # Interaction → LLM fallback
     dot.node("intent_agent", "IntentAgent (LLM)", shape="box", fillcolor=C_AGENT, fontsize="10")
-    dot.node("llm_chat", "chat\n→ DialogueAgent\n→ LLM 回复", shape="box", fillcolor=C_AGENT, fontsize="9")
+    dot.node("llm_chat", "chat\n→ 机器人本地语音\n(腾讯云端大模型)", shape="note", fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
     dot.node("llm_motion", "motion/navigation\n→ Gateway._reroute()\n→ 回到 motion/nav", shape="box", fillcolor=C_HIGHLIGHT, fontsize="9")
     dot.node("llm_inter", "interaction\n→ InteractionSkill", shape="box", fillcolor=C_AGENT, fontsize="9")
 
@@ -350,15 +346,14 @@ def build_module_deps():
     # Runtimes
     with dot.subgraph(name="cluster_rt") as c:
         c.attr(label="runtimes/", style="rounded,dashed", fontcolor=C_RUNTIME, fontsize="12", color=C_RUNTIME)
-        c.node("ir", "InteractionRuntime\n• intent_agent\n• dialogue_agent\n• interaction_skill", shape="box", fillcolor=C_RUNTIME)
+        c.node("ir", "InteractionRuntime\n• intent_agent\n• interaction_skill", shape="box", fillcolor=C_RUNTIME)
         c.node("mr", "MotionRuntime\n• motion_agent", shape="box", fillcolor=C_RUNTIME)
         c.node("nr", "NavigationRuntime\n• nav_agent (占位)", shape="box", fillcolor=C_RUNTIME)
 
     # Agents
     with dot.subgraph(name="cluster_ag") as c:
         c.attr(label="agents/", style="rounded,dashed", fontcolor=C_AGENT, fontsize="12", color=C_AGENT)
-        c.node("iag", "IntentAgent\nLLM→意图", shape="box", fillcolor=C_AGENT)
-        c.node("dag", "DialogueAgent\n纯对话", shape="box", fillcolor=C_AGENT)
+        c.node("iag", "IntentAgent\nLLM→意图→MQTT", shape="box", fillcolor=C_AGENT)
         c.node("mag", "MotionAgent\n运动决策", shape="box", fillcolor=C_AGENT)
         c.node("nag", "NavigationAgent\n导航决策", shape="box", fillcolor=C_AGENT)
 
@@ -366,7 +361,6 @@ def build_module_deps():
     with dot.subgraph(name="cluster_sk") as c:
         c.attr(label="skills/", style="rounded,dashed", fontcolor=C_SKILL, fontsize="12", color=C_SKILL)
         c.node("isk", "InteractionSkill\n音频/情绪/语音/设置", shape="box", fillcolor=C_SKILL)
-        c.node("dsk", "DialogueSkill\nLLM 对话", shape="box", fillcolor=C_SKILL)
         c.node("msk", "MotionSkill\n动作/移动/急停/模式", shape="box", fillcolor=C_SKILL)
         c.node("nsk", "NavigationSkill\n导航 MQTT", shape="box", fillcolor=C_SKILL)
 
@@ -396,14 +390,11 @@ def build_module_deps():
     dot.edge("gateway", "nr")
 
     dot.edge("ir", "iag", "has")
-    dot.edge("ir", "dag", "has")
     dot.edge("ir", "isk", "has")
     dot.edge("mr", "mag", "has")
     dot.edge("nr", "nag", "has")
 
-    dot.edge("iag", "llm_ext", "调 LLM", style="dashed")
-    dot.edge("dsk", "llm_ext", "调 LLM", style="dashed")
-    dot.edge("dag", "dsk", "has")
+    dot.edge("iag", "llm_ext", "意图→MQTT映射", style="dashed")
     dot.edge("mag", "msk", "has")
     dot.edge("nag", "nsk", "has")
 
@@ -503,11 +494,10 @@ def build_layers():
     with dot.subgraph(name="cluster_L3") as c:
         c.attr(label="Layer 3: Agent 决策层", style="filled", fillcolor="#161B22",
                fontcolor=C_AGENT, fontsize="12", color=C_AGENT)
-        c.node("l3_ia", "IntentAgent\nLLM 意图识别", fillcolor=C_AGENT)
-        c.node("l3_da", "DialogueAgent\n纯对话", fillcolor=C_AGENT)
+        c.node("l3_ia", "IntentAgent\nLLM 意图→MQTT映射", fillcolor=C_AGENT)
         c.node("l3_ma", "MotionAgent\n运动决策", fillcolor=C_AGENT)
         c.node("l3_na", "NavigationAgent\n导航决策", fillcolor=C_AGENT)
-        c.node("l3_rule", "✅ 调LLM  ❌ 不直接发MQTT", shape="plaintext",
+        c.node("l3_rule", "✅ 调LLM(仅意图映射)  ❌ 不直接发MQTT\n对话由机器人本地腾讯大模型处理", shape="plaintext",
                fontcolor=C_LLM, fontsize="9")
 
     # Layer 5: Skill
@@ -516,7 +506,6 @@ def build_layers():
                fontcolor=C_SKILL, fontsize="12", color=C_SKILL)
         c.node("l4_ms", "MotionSkill\nsend_motion/move/estop...", fillcolor=C_SKILL)
         c.node("l4_is", "InteractionSkill\nplay_audio/emotion/volume/led", fillcolor=C_SKILL)
-        c.node("l4_ds", "DialogueSkill\nLLM对话", fillcolor=C_SKILL)
         c.node("l4_ns", "NavigationSkill\nsend_navigation", fillcolor=C_SKILL)
         c.node("l4_rule", "✅ 发MQTT  ❌ 不做决策  ❌ 不判断", shape="plaintext",
                fontcolor=C_HIGHLIGHT, fontsize="9")
@@ -537,7 +526,6 @@ def build_layers():
     dot.edge("l2_direct", "l3_ma", style="dashed")
     dot.edge("l2_llm", "l3_ia", style="dashed")
     dot.edge("l3_ma", "l4_ms", style="dashed")
-    dot.edge("l3_da", "l4_ds", style="dashed")
     dot.edge("l3_na", "l4_ns", style="dashed")
     dot.edge("l4_ms", "l5_mqtt", style="dashed")
     dot.edge("l4_is", "l5_mqtt", style="dashed")
@@ -621,7 +609,7 @@ def build_call_chain():
         c.node("irt_check", 'context["action"] 有值?', shape="diamond", fillcolor=C_AGENT, fontsize="9")
         c.node("irt_direct", "直接执行 InteractionSkill\n(play_audio/switch_emotion/\nvoice_wakeup/volume/led)", shape="box", fillcolor=C_SKILL)
         c.node("irt_llm", "调 IntentAgent (LLM)", shape="box", fillcolor=C_AGENT)
-        c.node("irt_llm_out", "LLM 返回:\nchat→DialogueAgent\ninteraction→InteractionSkill\nmotion/nav→回Gateway二次路由", shape="box", fillcolor=C_AGENT, fontsize="9")
+        c.node("irt_llm_out", "LLM 返回:\nchat→机器人本地语音(腾讯)\ninteraction→InteractionSkill\nmotion/nav→回Gateway二次路由", shape="box", fillcolor=C_AGENT, fontsize="9")
 
         # MotionRuntime
         c.node("mrt_label", "MotionRuntime", shape="plaintext", fontcolor=C_RUNTIME, fontsize="11")

@@ -77,7 +77,7 @@
 
 | 设计链路 | 设计要求 | 当前能力 | 状态 |
 |---------|---------|---------|------|
-| 知识问答 (§20.1) | Gateway→InteractionRT→KnowledgeAgent→Knowledge→DialogueAgent→SpeechSkill→TTS | ⚠️ DialogueAgent 纯对话可用，无 Knowledge 检索 | ⚠️ |
+| 知识问答 (§20.1) | Gateway→InteractionRT→KnowledgeAgent→Knowledge→SpeechSkill→TTS | ⚠️ 对话由机器人本地腾讯大模型处理，Agent 层无 Knowledge 检索 | ⚠️ |
 | 导航任务 (§20.2) | Gateway→InteractionRT(意图)→Gateway→NavigationRT→NavAgent→NavSkill→RobotNavAPI→Gateway状态回传→InteractionRT播报 | ⚠️ Navigation 占位，仅发 MQTT 6001，无回传 | ⚠️ |
 | 动作任务 (§20.3) | Gateway→InteractionRT(意图)→Gateway→MotionRT→MotionAgent→WaveSkill→RobotMotionAPI→Gateway回传→InteractionRT回复 | ✅ cqm1/cqm2 端到端链路通 | ✅ |
 | 复杂组合 (§20.4) | Gateway→InteractionRT(拆解)→Gateway→NavRT+MotionRT 并行→Gateway同步状态/仲裁 | ❌ 无 Result Aggregator，无多 Runtime 并行 | ❌ |

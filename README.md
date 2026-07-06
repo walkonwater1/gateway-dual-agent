@@ -38,8 +38,9 @@
 |------|------|------|--------|----------|
 | **Gateway** | `gateway/` | 入口、标准化、路由、二次分发、结果汇合 | 不调 LLM、不做动作、不做决策 | ❌ |
 | **Runtime** | `runtimes/` | 编排所属 Agent、区分"直接执行"和"LLM 理解"两条路径 | 不直接操作硬件、不直接发 MQTT | ❌ |
-| **Agent** | `agents/` | 决策：调 LLM、选意图、定参数 | 不直接发 MQTT | ✅ (Intent/Dialogue) |
-| **Skill** | `skills/` | 执行：将决策翻译为 MQTT 指令 | 不做决策、不判断 | ❌ (DialogueSkill 例外) |
+| **Agent** | `agents/` | 决策：调 LLM 做意图→MQTT映射、定参数 | 不直接发 MQTT | ✅ (仅 IntentAgent) |
+| **Skill** | `skills/` | 执行：将决策翻译为 MQTT 指令 | 不做决策、不判断 | ✅ |
+| **机器人本地** | SDK 内部 | 对话、ASR、TTS（腾讯云端大模型） | 闭环在 C++ 侧 | — |
 | **Capability** | `capabilities/` | MQTT 协议封装、topic 路由、QoS | 不含业务逻辑 | ❌ |
 | **Shared** | `shared/` | RuntimeMessage / RuntimeResult 数据协议、基类 | — | ❌ |
 
@@ -137,8 +138,8 @@ class RuntimeResult:
 │ │   │LLM路径   │   │ └───────────────┘
 │ │   └──────────┘   │
 │ │   ↓               │
-│ │ chat → Dialogue   │
-│ │   Agent → LLM回复 │
+│ │ chat → 机器人本地 │
+│ │   语音(腾讯大模型) │
 │ │ motion/nav → 返回 │
 │ │   result给Gateway │
 │ │   (触发二次路由)  │
@@ -312,7 +313,7 @@ InteractionSkill.execute(intent, params)
 │ "换个表情"│ "换个表情" 命中│interaction│ "switch_…   │ _switch_…   │ 1007 random│
 │ "音量80" │ "音量" 命中  │ interaction│ "volume"    │ _set_volume │ 5002 80    │
 │ "带我去" │ "带我去" 命中│ navigation│ "navigate"  │ send_nav    │ 6001 {...} │
-│ "你好"   │ 未命中       │ interaction│ (空)        │ IntentAgent │ → Dialogue │
+│ "你好"   │ 未命中       │ interaction│ (空)        │ IntentAgent │ → 机器人本地语音 │
 │          │ 默认         │            │             │ chat→LLM回复│ Agent      │
 │ "帮我做…"│ 未命中       │ interaction│ (空)        │ IntentAgent │ → reroute  │
 │          │ 默认         │            │             │ motion→     │ → 1006     │
@@ -334,19 +335,17 @@ agent_demo/
 │   └── router.py                 # DIRECT_ROUTES 关键词表 + Router 最长匹配
 │
 ├── runtimes/                     # Runtime 编排层
-│   ├── interaction_runtime.py    # 对话 + LLM 意图理解（两条路径）
+│   ├── interaction_runtime.py    # LLM 意图理解 → MQTT 指令（两条路径）
 │   ├── motion_runtime.py         # 动作/移动/急停/运动模式
 │   └── navigation_runtime.py     # 导航/建图（占位）
 │
 ├── agents/                       # Agent 决策层
 │   ├── intent_agent.py           # LLM 意图识别（快速路径 + LLM fallback）
-│   ├── dialogue_agent.py         # 纯对话 → DialogueSkill
 │   ├── motion_agent.py           # 运动决策 → MotionSkill
 │   └── navigation_agent.py       # 导航决策 → NavigationSkill
 │
 ├── skills/                       # Skill 执行层（发 MQTT 指令）
 │   ├── motion_skill.py           # 动作/移动/急停/模式/步态/身高/避障/UWB
-│   ├── dialogue_skill.py         # LLM 对话（OpenAI 兼容 API）
 │   ├── interaction_skill.py      # 音频/情绪/语音唤醒/音量/氛围灯
 │   └── navigation_skill.py       # 导航 MQTT 指令（占位）
 │
@@ -416,7 +415,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 你: 四川话        → 播放 sch1 音频
 你: 换个表情      → 随机切换情绪
 你: 站立          → 切换运动模式
-你: 你好          → LLM 对话
+你: 你好          → 机器人本地语音（腾讯大模型）处理
 你: 带我去充电站  → 导航任务下发
 你: /menu         → 切换到菜单模式
 你: /q            → 退出
@@ -432,7 +431,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 |------|------|------|---------|
 | 动作执行 | `cqm1`, `cqm2`, `cqm3` | Gateway→Router→MotionRT→Agent→Skill→MQTT(1006)→Bridge→ROS2→MotionManager | ✅ 全链路通，Motor acquired/released 正常。`motion_data_map_` 中缺少动作数据文件，需确认实际动作名 |
 | 音频播放 | `四川话`, `普通话`, `随机播放` | ...→InteractionSkill→MQTT(1007)→general_interface→FileAudio | ✅ Speaker Acquire/Release 正常，6s 播放周期 |
-| 对话 | `你好`, `你是谁` | ...→IntentAgent(fast path)→DialogueAgent→LLM | ✅ 快速路径命中，LLM 对话正常 |
+| 对话 | `你好`, `你是谁` | IntentAgent 快速路径→返回提示信息 | ✅ 引导用户使用机器人本地语音交互 |
 
 ### 9.2 代码就绪待验证 ⏳
 
