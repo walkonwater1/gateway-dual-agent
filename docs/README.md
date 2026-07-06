@@ -1,5 +1,14 @@
 # Agent Runtime — 架构文档
 
+## 文档索引
+
+| 文档 | 说明 |
+|------|------|
+| [GAP_ANALYSIS.md](GAP_ANALYSIS.md) | Demo vs 设计文档逐模块差距分析 |
+| [generate_diagrams.py](generate_diagrams.py) | 图表生成脚本 |
+
+---
+
 ## 图表目录
 
 ### 1. 系统架构总览

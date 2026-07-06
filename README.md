@@ -6,6 +6,7 @@
 的完整分层实现。目标：**证明 Gateway + 三 Runtime + Agent/Skill 分层架构可行，并打通 Python → MQTT → Bridge → ROS2 → 机器人全链路。**
 
 > 📊 **可视化架构图**：[docs/](docs/) — 6 张专业架构图（PNG），适合演示和评审。
+> 📋 **设计差距分析**：[docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) — 逐模块对照设计文档的详细差距审查。
 
 ---
 
