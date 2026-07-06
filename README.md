@@ -11,14 +11,16 @@
 
 - [1. 架构总览](#1-架构总览)
 - [2. 分层设计](#2-分层设计)
-- [3. 数据流详解](#3-数据流详解)
-- [4. 路由决策](#4-路由决策)
-- [5. 目录结构](#5-目录结构)
-- [6. 快速开始](#6-快速开始)
-- [7. 功能清单与验证状态](#7-功能清单与验证状态)
-- [8. 与设计文档对应关系](#8-与设计文档对应关系)
-- [9. 已确认限制](#9-已确认限制)
-- [10. 后续路线](#10-后续路线)
+- [3. 调用关系图](#3-调用关系图)
+- [4. 请求处理全流程](#4-请求处理全流程)
+- [5. 路由决策树](#5-路由决策树)
+- [6. 决策树与调用链对照](#6-决策树与调用链对照)
+- [7. 目录结构](#7-目录结构)
+- [8. 快速开始](#8-快速开始)
+- [9. 功能清单与验证状态](#9-功能清单与验证状态)
+- [10. 与设计文档对应关系](#10-与设计文档对应关系)
+- [11. 已确认限制](#11-已确认限制)
+- [12. 后续路线](#12-后续路线)
 
 ---
 
@@ -97,11 +99,89 @@
 
 ---
 
-## 3. 数据流详解
+## 3. 调用关系图
 
-### 3.1 统一消息协议 (`shared/message.py`)
+### 3.1 模块依赖关系
 
-所有层之间使用两个 dataclass 通信，保证类型安全：
+```
+                                  ┌─────────────────────┐
+                                  │       main.py        │
+                                  │  DI 组装 + 启动入口   │
+                                  └──────────┬──────────┘
+                                             │ 注入依赖
+               ┌─────────────────────────────┼──────────────────────────┐
+               ▼                             ▼                          ▼
+  ┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
+  │   InteractionRuntime   │  │     MotionRuntime      │  │   NavigationRuntime    │
+  │   runtimes/            │  │   runtimes/            │  │   runtimes/            │
+  │                        │  │                        │  │                        │
+  │  _intent_agent ────────┤  │  _motion_agent ────────┤  │  _nav_agent ───────────┤
+  │       │                │  │       │                │  │       │                │
+  │  _dialogue_agent ──────┤  │       ▼                │  │       ▼                │
+  │       │                │  │  MotionSkill            │  │  NavigationSkill        │
+  │  _skill ───────────────┤  │       │                │  │       │                │
+  │       │                │  │       ▼                │  │       ▼                │
+  └───────┼────────────────┘  └───────┼────────────────┘  └───────┼────────────────┘
+          │                           │                           │
+          │     ┌─────────────────────┼───────────────────────────┤
+          │     │                     │                           │
+          ▼     ▼                     ▼                           ▼
+  ┌───────────────┐    ┌─────────────────────────────────────────────┐
+  │  Gateway      │    │              RobotMqttClient                │
+  │  gateway/     │    │              capabilities/                  │
+  │               │    │                                             │
+  │  _router ─────┼────┤  send_motion()  send_move()  send_estop()  │
+  │  _runtimes {} │    │  send_volume()  send_led()  send_corpus()  │
+  │               │    │  send_navigation()  ...                    │
+  └───────────────┘    └──────────────────────────┬──────────────────┘
+                                                  │ MQTT
+                                                  ▼
+                                        ┌──────────────────┐
+                                        │  Bridge (C++)    │
+                                        │  MQTT ↔ ROS2     │
+                                        └──────────────────┘
+```
+
+### 3.2 Gateway → 三 Runtime 路由关系
+
+```
+                        ┌─────────────┐
+                        │   Gateway   │
+                        │ handle_text │
+                        └──────┬──────┘
+                               │
+                        ┌──────▼──────┐
+                        │   Router    │
+                        │  .route()   │
+                        └──────┬──────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+   ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
+   │  "interaction"  │ │  "motion"   │ │  "navigation"   │
+   │  (默认 / LLM)   │ │  (关键词)   │ │  (关键词)       │
+   └────────┬────────┘ └──────┬──────┘ └────────┬────────┘
+            │                 │                  │
+   ┌────────▼────────┐ ┌──────▼──────┐ ┌────────▼────────┐
+   │InteractionRuntime│ │MotionRuntime│ │NavigationRuntime│
+   │                  │ │             │ │   (占位)        │
+   │ 两条路径:         │ │ MotionAgent │ │ NavigationAgent │
+   │ ①直接Skill执行    │ │     │       │ │     │           │
+   │ ②LLM→IntentAgent │ │ MotionSkill  │ │ NavigationSkill │
+   │     │             │ │     │       │ │     │           │
+   │ ①DialogueSkill   │ │ send_motion │ │ send_navigation │
+   │ ②InteractionSkill│ │ send_move   │ │                 │
+   └──────────────────┘ │ send_estop  │ └─────────────────┘
+                         └─────────────┘
+```
+
+---
+
+## 4. 请求处理全流程
+
+### 4.1 统一消息协议 (`shared/message.py`)
+
+所有层之间通过两个 dataclass 传递数据。**`context` 字段是 Gateway 和 Runtime/Agent 之间的核心契约：**
 
 ```python
 @dataclass
@@ -110,114 +190,324 @@ class RuntimeMessage:
     session_id: str          # 单用户固定 "default"
     source: str              # "user" | "system" | "robot_event"
     input_type: str          # "text" | "asr" | "event"
-    payload: dict            # {"text": "..."}
-    context: dict            # Router 预填 action + params
+    payload: dict            # {"text": "..."}              ← 原始输入
+    context: dict            # {"action": "motion", ...}    ← Router 预填
 
 @dataclass
 class RuntimeResult:
     success: bool            # 执行是否成功
     reply: str               # 给用户的回复
-    intent: str              # chat|motion|navigation|interaction|...
+    intent: str              # chat|motion|navigation|interaction
     data: dict               # {uuid, action, params, ...}
     error: Optional[str]
 ```
 
-### 3.2 两种典型数据流
-
-#### 路径 A：关键词直达（零 LLM 开销）
+### 4.2 完整时序流程图
 
 ```
-输入 "cqm1"
-  ↓
-Gateway.handle_text("cqm1")
-  → RuntimeMessage(payload={"text": "cqm1"})
-  ↓
-Router.route()
-  → "cqm1" ∈ DIRECT_ROUTES → 命中
-  → message.context = {action: "motion", params: {name: "cqm1"}}
-  → 返回 "motion"
-  ↓
-MotionRuntime.handle(message)
-  → MotionAgent.handle()
-    → action="motion", params={name: "cqm1"}
-    → MotionSkill.execute()
-      → _do_motion() → mqtt.send_motion("cqm1")
-        → publish("eir/operation_instructions", {command:1006, commandData:"cqm1"})
-          ↓
-  RuntimeResult(success=True, reply="执行动作: cqm1")
+用户输入文本
+      │
+      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ Gateway.handle_text(text)                       gateway/gateway.py  │
+│                                                                     │
+│   1. RuntimeMessage.from_text(text)  ← 封装                         │
+│   2. self._router.route(message)     ← 选 Runtime                  │
+│   3. self._runtimes[name].handle()   ← 首次分发                    │
+│   4. if intent in (motion,navigation) → _reroute()  ← 二次路由     │
+│   5. return RuntimeResult                                           │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │   Router.route()    │  gateway/router.py
+                    │   关键词最大匹配      │
+                    │   命中 → 写 context  │
+                    │   未命中→interaction │
+                    └──────────┬──────────┘
+                               │
+          ┌────────────────────┼──────────────────────┐
+          ▼                    ▼                      ▼
+  ┌───────────────┐   ┌───────────────┐   ┌───────────────────┐
+  │  interaction  │   │    motion     │   │    navigation     │
+  └───────┬───────┘   └───────┬───────┘   └────────┬──────────┘
+          │                   │                    │
+          ▼                   ▼                    ▼
+┌─────────────────────┐ ┌───────────────┐ ┌───────────────────┐
+│ InteractionRuntime  │ │ MotionRuntime │ │ NavigationRuntime │
+│   .handle(message)  │ │ .handle(msg)  │ │  .handle(msg)     │
+│                     │ │               │ │                   │
+│ 读 context["action"]│ │ → MotionAgent │ │ → NavigationAgent │
+│                     │ │     .handle() │ │     .handle()     │
+│ ┌─ 路径1 ─────────┐ │ │      │        │ │      │            │
+│ │action已预填      │ │ │ MotionSkill  │ │ NavigationSkill   │
+│ │→直接调Skill执行  │ │ │  .execute()  │ │  .execute()       │
+│ │(零LLM)           │ │ │      │        │ │      │            │
+│ └─────────────────┘ │ │  if/elif:    │ │  send_navigation  │
+│                     │ │  "motion"→   │ │  → MQTT 6001      │
+│ ┌─ 路径2 ─────────┐ │ │  send_motion │ │                   │
+│ │action未预填      │ │  "move"→      │ └───────────────────┘
+│ │→ IntentAgent     │ │  send_move    │
+│ │   .handle()      │ │  "stop"→      │
+│ │   ┌──────────┐   │ │  send_estop   │
+│ │   │快速路径   │   │ │  ...          │
+│ │   │LLM路径   │   │ └───────────────┘
+│ │   └──────────┘   │
+│ │   ↓               │
+│ │ chat → Dialogue   │
+│ │   Agent → LLM回复 │
+│ │ motion/nav → 返回 │
+│ │   result给Gateway │
+│ │   (触发二次路由)  │
+│ │ interaction →     │
+│ │   InteractionSkill│
+│ └─────────────────┘ │
+└─────────────────────┘
 ```
 
-**耗时：** < 1ms (无 LLM 调用)，纯 Python 函数调用链。
-
-#### 路径 B：LLM 意图理解 + 二次路由
+### 4.3 路径 A：关键词直达（以 `cqm1` 为例）
 
 ```
-输入 "帮我做个欢迎动作"
-  ↓
-Router.route()
-  → 无关键词命中 → 返回 "interaction"
-  ↓
-InteractionRuntime.handle(message)
-  → message.context 无预填 action → 走路径 2 (LLM)
-  → IntentAgent.handle()
-    → _fast_path() 未命中
-    → _llm_path() → LLM 返回 {intent:"motion", action:"motion", params:{name:"cqm1"}}
-    → RuntimeResult(intent="motion", data={action:"motion", params:{name:"cqm1"}})
-  ↓
-Gateway._reroute("motion", ...)
-  → message.context.update({action:"motion", params:{name:"cqm1"}})
-  → MotionRuntime.handle(message)
-  → ... (同路径 A)
+输入: "cqm1"
+
+  [Gateway]  handle_text("cqm1")
+      │       ① RuntimeMessage(payload={"text":"cqm1"})
+      │       ② router.route(message) → "motion"
+      │       ③ runtimes["motion"].handle(message)
+      ▼
+  [Router]   route()
+      │       "cqm1" in DIRECT_ROUTES → 命中
+      │       message.context = {"action":"motion", "params":{"name":"cqm1"}}
+      │       return "motion"
+      ▼
+  [MotionRuntime]  handle(message)
+      │       → motion_agent.handle(message)
+      ▼
+  [MotionAgent]  handle(message)
+      │       action=context["action"]="motion"
+      │       params=context["params"]={"name":"cqm1"}
+      │       → skill.execute("motion", {"action":"motion","name":"cqm1"})
+      ▼
+  [MotionSkill]  execute(intent="motion", params={...})
+      │       if params["action"] == "motion":
+      │           _do_motion({"name":"cqm1"})
+      │               mqtt.send_motion("cqm1")          ← 唯一 MQTT 调用点
+      ▼
+  [RobotMqttClient]  send_command(1006, "cqm1")
+      │       topic = "eir/operation_instructions"
+      │       publish({"command":1006, "uuid":"...", "commandData":"cqm1"})
+      ▼
+  [MQTT] → [Bridge] → [ROS2] → [MotionManager]
+      │
+      └──→ RuntimeResult(success=True, reply="执行动作: cqm1")
+
+  耗时: < 1ms (无 LLM)
 ```
 
-**耗时：** LLM 推理时间（通常 100-500ms），其余路径同 A。
+### 4.4 路径 B：LLM 意图理解 + 二次路由（以 `帮我做个欢迎动作` 为例）
+
+```
+输入: "帮我做个欢迎动作"
+
+  [Gateway]  handle_text("帮我做个欢迎动作")
+      │       ② router.route(message) → 无关键词命中 → "interaction"
+      │       ③ runtimes["interaction"].handle(message)
+      ▼
+  [InteractionRuntime]  handle(message)
+      │       context["action"] 为空 → 走路径 2 (LLM)
+      │       → intent_agent.handle(message)
+      ▼
+  [IntentAgent]  handle(message)
+      │       _fast_path("帮我做个欢迎动作") → None (不匹配快速路径)
+      │       _llm_path()
+      │         → LLM(qwen2.5:0.5b) ← 唯一 LLM 调用点
+      │         → {"intent":"motion","action":"motion","params":{"name":"cqm1"}}
+      ▼
+      │       return RuntimeResult(
+      │           intent="motion",
+      │           data={"action":"motion","params":{"name":"cqm1"}}
+      │       )
+      ▼
+  [InteractionRuntime]  result.intent == "motion" → 返回给 Gateway
+      ▼
+  [Gateway]  result.intent in ("motion","navigation")
+      │       → _reroute("motion", message, result)
+      │          message.context.update({"action":"motion","params":{"name":"cqm1"}})
+      │          → runtimes["motion"].handle(message)
+      ▼
+  [MotionRuntime→MotionAgent→MotionSkill→MQTT]  ← 后续同路径 A
+
+  耗时: LLM 推理 ~100-500ms + 调用链 < 1ms
+```
+
+### 4.5 路径 C：Interaction 类关键词直达（以 `四川话` 为例）
+
+```
+输入: "四川话"
+
+  [Router]   "四川话" in DIRECT_ROUTES → ("interaction", "play_audio", {"name":"sch1"})
+      │       message.context = {"action":"play_audio", "params":{"name":"sch1"}}
+      │       return "interaction"
+      ▼
+  [InteractionRuntime]  handle(message)
+      │       action = context["action"] = "play_audio"  ← 已预填
+      │       → 直接执行 InteractionSkill
+      │       (跳过 IntentAgent，零 LLM 开销)
+      ▼
+  [InteractionSkill]  execute({action:"play_audio", name:"sch1"})
+      │       _play_audio({"name":"sch1"})
+      │           mqtt.send_corpus({"type":"play_specific_audio","value":{"name":"sch1"}})
+      ▼
+  [RobotMqttClient]  send_command(1007, {...}) → topic="eir/operation_instructions"
+      ▼
+  [Bridge→ROS2→general_interface→FileAudio]  ← 播放音频
+
+  耗时: < 1ms (无 LLM)
+```
 
 ---
 
-## 4. 路由决策
+## 5. 路由决策树
 
-### 4.1 路由优先级
+### 5.1 决策树（从输入到 MQTT 指令）
 
 ```
-Router.route(text)
+                              用户输入文本
+                                    │
+                                    ▼
+                          ┌─────────────────┐
+                          │  Router.route() │
+                          │ 关键词最长匹配     │
+                          └────────┬────────┘
+                                   │
+                    ┌──────────────┼──────────────┐
+                    │ 命中          │ 未命中         │
+                    ▼              ▼              │
+           ┌──────────────┐  ┌──────────────┐     │
+           │ 写 context:  │  │ 无预填        │     │
+           │ action="x"   │  │ 默认 →        │     │
+           │ params={...} │  │ interaction   │     │
+           └──────┬───────┘  └──────┬───────┘     │
+                  │                 │              │
+    ┌─────────────┼─────────┐       │              │
+    │             │         │       ▼              │
+    ▼             ▼         ▼  ┌──────────────────────┐
+  motion    interaction  navigation  │ InteractionRuntime   │
+    │             │         │  │ handle(message)       │
+    │             │         │  │                       │
+    │             │         │  │ context["action"]? ───┤
+    │             │         │  │   │                   │
+    │             │         │  │  有 → 直接Skill执行   │
+    │             │         │  │   │  (play_audio/     │
+    │             │         │  │   │   switch_emotion/ │
+    │             │         │  │   │   voice_wakeup/   │
+    │             │         │  │   │   volume/led)     │
+    │             │         │  │   │                   │
+    │             │         │  │  无 → IntentAgent     │
+    │             │         │  │       LLM 意图识别    │
+    │             │         │  │         │             │
+    │             │         │  │   ┌─────┼──────┐      │
+    │             │         │  │   ▼     ▼      ▼      │
+    │             │         │  │ chat motion navigation│
+    │             │         │  │   │     │      │      │
+    │             │         │  │   ▼     ▼      ▼      │
+    │             │         │  │Dialogue 返回   返回    │
+    │             │         │  │Agent  Gateway Gateway │
+    │             │         │  │  │  (二次路由)(二次路由)│
+    │             │         │  └──┼──────┼──────┼──────┘
+    │             │         │     │      │      │
+    └─────────────┼─────────┘     │      │      │
+                  └───────────────┼──────┼──────┘
+                                  │      │
+                        ┌─────────┘      └──────────┐
+                        ▼                           ▼
+                  ┌───────────┐             ┌───────────────┐
+                  │  Motion   │             │  Navigation   │
+                  │  Runtime  │             │  Runtime      │
+                  │     │     │             │     │         │
+                  │  Motion  │             │  Navigation   │
+                  │  Agent   │             │  Agent        │
+                  │     │     │             │     │         │
+                  │  Motion  │             │  Navigation   │
+                  │  Skill   │             │  Skill        │
+                  └────┬─────┘             └──────┬────────┘
+                       │                          │
+            ┌──────────┼──────────┐               │
+            ▼          ▼          ▼               ▼
+       send_motion  send_move send_estop   send_navigation
+       (1006)       (3001)    (9000)       (6001)
+            │          │          │               │
+            └──────────┼──────────┼───────────────┘
+                       ▼          ▼
+              ┌─────────────────────────────┐
+              │      RobotMqttClient        │
+              │  publish(topic, payload)    │
+              └─────────────┬───────────────┘
+                            │ MQTT
+                            ▼
+                     ┌────────────┐
+                     │   Bridge   │
+                     │ MQTT↔ROS2  │
+                     └────────────┘
+```
+
+### 5.2 Skill 内部分发（if/elif 路由）
+
+以 MotionSkill 为例，从 Agent 传入的 `params["action"]` 决定最终 MQTT 指令：
+
+```
+MotionSkill.execute(intent, params)
   │
-  ├── 1. DIRECT_ROUTES 关键词匹配（最长优先）
-  │       "解除急停"(4字) > "急停"(2字) > "停"(1字)
+  │  action = params["action"]
   │
-  └── 2. 无匹配 → Interaction Runtime → IntentAgent(LLM) 判断意图
+  ├── "motion"       → send_motion(name)        → MQTT 1006, eir/operation_instructions
+  ├── "move"         → send_move(lx,ly,az)      → MQTT 3001, eir/operation_move2
+  ├── "stop"         → send_estop(True)         → MQTT 9000, eir/soft_emergency_stop
+  ├── "release_estop"→ send_estop(False)        → MQTT 9000, eir/soft_emergency_stop
+  ├── "loco_mode"    → send_loco_mode(mode)     → MQTT 1001, eir/operation_instructions
+  ├── "gait"         → send_gait(mode)          → MQTT 1002, eir/operation_instructions
+  ├── "body_height"  → send_body_height(h)      → MQTT 1003, eir/operation_instructions
+  ├── "orientation"  → send_body_orientation()  → MQTT 1008, eir/operation_instructions
+  ├── "oas"          → send_oas(enable)         → MQTT 1004, eir/operation_instructions
+  └── "uwb"          → send_uwb(enable)         → MQTT 1005, eir/operation_instructions
+
+InteractionSkill.execute(intent, params)
+  │
+  ├── "play_audio"    → send_corpus({type, name}) → MQTT 1007, eir/operation_instructions
+  ├── "switch_emotion"→ send_corpus({type})       → MQTT 1007, eir/operation_instructions
+  ├── "voice_wakeup"  → send_corpus({type})       → MQTT 1007, eir/operation_instructions
+  ├── "volume"        → send_volume(vol)          → MQTT 5002, eir/setting
+  └── "led"           → send_led(rgb, ...)        → MQTT 5001, eir/setting
 ```
-
-### 4.2 关键词路由表 (router.py)
-
-| 类别 | 关键词示例 | → Runtime | → Action |
-|------|-----------|-----------|----------|
-| 急停 | 停、急停、停下、站住、别动 | motion | stop |
-| 解除急停 | 解除急停、退出急停 | interaction | release_estop |
-| 动作 | cqm1, cqm2, cqm3, 动作1/2/3 | motion | motion |
-| 移动 | 前进、后退、左转、右转 | motion | move |
-| 模式 | 站立、趴下、起身、小跑 | motion | loco_mode |
-| 避障 | 开避障、关避障 | motion | oas |
-| 音频 | 四川话、普通话、随机播放 | interaction | play_audio |
-| 情绪 | 换个表情、切换情绪 | interaction | switch_emotion |
-| 语音 | 开/关语音唤醒 | interaction | voice_wakeup |
-| 设置 | 音量、氛围灯 | interaction | volume / led |
-| 导航 | 带我去、导航到、前往、去 | navigation | navigate |
-
-### 4.3 IntentAgent LLM 提示词
-
-IntentAgent 使用 `qwen2.5:0.5b` (本地 ollama) 做意图分类，输出结构化 JSON：
-
-```json
-{"intent": "chat|motion|interaction|navigation|unknown",
- "action": "...",
- "params": {...}}
-```
-
-有快速路径（`_fast_path`）："你好"、"谢谢"、"再见" 等直接返回 chat，省一次 LLM 调用。
 
 ---
 
-## 5. 目录结构
+## 6. 决策树与调用链对照
+
+以三种典型输入展示 Router 匹配 → context 填充 → Skill 分发 → MQTT 的完整链路：
+
+```
+┌──────────┬──────────────┬────────────┬─────────────┬─────────────┬────────────┐
+│  输入     │ Router 关键词 │ → Runtime  │ context      │ Skill 分发   │ MQTT 指令  │
+│          │              │            │ action       │             │            │
+├──────────┼──────────────┼────────────┼─────────────┼─────────────┼────────────┤
+│ "cqm1"   │ "cqm1" 命中  │ motion     │ "motion"    │ _do_motion  │ 1006 cqm1  │
+│ "前进"   │ "前进" 命中  │ motion     │ "move"      │ _do_move    │ 3001 [0.5] │
+│ "停"     │ "停" 命中    │ motion     │ "stop"      │ _do_estop   │ 9000 "1"   │
+│ "站立"   │ "站立" 命中  │ motion     │ "loco_mode" │ _do_loco    │ 1001 10    │
+│ "四川话" │ "四川话" 命中 │ interaction│ "play_audio"│ _play_audio │ 1007 sch1  │
+│ "换个表情"│ "换个表情" 命中│interaction│ "switch_…   │ _switch_…   │ 1007 random│
+│ "音量80" │ "音量" 命中  │ interaction│ "volume"    │ _set_volume │ 5002 80    │
+│ "带我去" │ "带我去" 命中│ navigation│ "navigate"  │ send_nav    │ 6001 {...} │
+│ "你好"   │ 未命中       │ interaction│ (空)        │ IntentAgent │ → Dialogue │
+│          │ 默认         │            │             │ chat→LLM回复│ Agent      │
+│ "帮我做…"│ 未命中       │ interaction│ (空)        │ IntentAgent │ → reroute  │
+│          │ 默认         │            │             │ motion→     │ → 1006     │
+└──────────┴──────────────┴────────────┴─────────────┴─────────────┴────────────┘
+```
+
+---
+
+## 7. 目录结构
 
 ```
 agent_demo/
@@ -266,15 +556,15 @@ agent_demo/
 
 ---
 
-## 6. 快速开始
+## 8. 快速开始
 
-### 6.1 环境要求
+### 8.1 环境要求
 
 - Python >= 3.10
 - 机器人上运行: mosquitto (MQTT broker, port 8899) + Bridge + ehr_ros_app
 - (可选) ollama 或 OpenAI 兼容 LLM 服务
 
-### 6.2 安装
+### 8.2 安装
 
 ```bash
 cd agent_demo
@@ -286,7 +576,7 @@ cp config.example.yaml config.local.yaml
 #   - llm.api_key: API Key
 ```
 
-### 6.3 先测 MQTT 连通性
+### 8.3 先测 MQTT 连通性
 
 ```bash
 python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
@@ -294,7 +584,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 观察机器人日志是否收到 `motion playback cmd`，确认 Bridge 链路通。
 
-### 6.4 一键启动
+### 8.4 一键启动
 
 ```bash
 ./start.sh              # 检查环境 + 启动（交互模式）
@@ -303,7 +593,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 ./start.sh --check      # 仅检查环境，不启动
 ```
 
-### 6.5 交互模式
+### 8.5 交互模式
 
 ```
 你: cqm1          → 关键词直达 Motion Runtime，零 LLM
@@ -320,9 +610,9 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 ---
 
-## 7. 功能清单与验证状态
+## 9. 功能清单与验证状态
 
-### 7.1 已验证通过 ✅
+### 9.1 已验证通过 ✅
 
 | 功能 | 输入 | 链路 | 验证结果 |
 |------|------|------|---------|
@@ -330,7 +620,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 | 音频播放 | `四川话`, `普通话`, `随机播放` | ...→InteractionSkill→MQTT(1007)→general_interface→FileAudio | ✅ Speaker Acquire/Release 正常，6s 播放周期 |
 | 对话 | `你好`, `你是谁` | ...→IntentAgent(fast path)→DialogueAgent→LLM | ✅ 快速路径命中，LLM 对话正常 |
 
-### 7.2 代码就绪待验证 ⏳
+### 9.2 代码就绪待验证 ⏳
 
 这些功能代码已完整实现，MQTT 指令格式与 Bridge 协议对齐，逻辑上应通，但尚未逐条在机器人上验证：
 
@@ -349,13 +639,13 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 | 氛围灯 | `氛围灯` | 5001 → eir/setting | 高，同上 |
 | 导航 | `带我去充电站` | 6001 → eir/slam_navigation | 高，导航后端未确认 |
 
-### 7.3 LLM 意图识别 ⏳
+### 9.3 LLM 意图识别 ⏳
 
 代码已实现，但依赖 LLM 服务可用。IntentAgent 的 `_fast_path` 覆盖了常见问候语，复杂意图（如"帮我做个动作"）需 LLM 判断。
 
 ---
 
-## 8. 与设计文档对应关系
+## 10. 与设计文档对应关系
 
 | 设计文档章节 | 对应代码 | 状态 |
 |------------|---------|------|
@@ -372,9 +662,9 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 ---
 
-## 9. 已确认限制
+## 11. 已确认限制
 
-### 9.1 机器人侧
+### 11.1 机器人侧
 
 | 问题 | 现象 | 影响 |
 |------|------|------|
@@ -384,7 +674,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 | TTS/运动暂停未暴露 | 内部 SDK 调用，无 ROS2 topic | Agent 无法控制 TTS 播报和运动暂停/恢复 |
 | 诊断播报干扰 | eir-diagnostician 每 30s 占 Speaker | 干扰音频验证，已通过 systemctl 禁用 |
 
-### 9.2 Agent 侧
+### 11.2 Agent 侧
 
 | 限制 | 说明 | 计划 |
 |------|------|------|
@@ -398,7 +688,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 ---
 
-## 10. 后续路线
+## 12. 后续路线
 
 ```
 Phase 1 ✅  MVP 链路     text→Gateway→Runtime→Agent→Skill→MQTT→机器人
