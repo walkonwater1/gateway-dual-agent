@@ -1,0 +1,18 @@
+# Agent Demo 配置
+# 复制为 config.local.yaml 并填入真实值（该文件不会被 git 追踪）
+
+# MQTT Broker（机器人上 mosquitto 的地址和端口）
+mqtt:
+  host: "127.0.0.1"     # 改为机器人实际 IP
+  port: 8899
+
+# LLM 配置（用于意图识别和对话）
+llm:
+  base_url: "https://api.openai.com/v1"   # 或公司内部的 LLM 地址
+  api_key: "sk-xxxx"                        # 填入真实 key
+  model: "gpt-4o"                           # 或公司提供的模型名
+  temperature: 0.3
+  max_tokens: 512
+
+# 日志级别: DEBUG / INFO / WARNING / ERROR
+log_level: "INFO"
