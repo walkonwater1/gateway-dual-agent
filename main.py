@@ -29,7 +29,7 @@ Agent Runtime — 启动入口。
     Runtime:  编排所属 Agent
     Agent:    决策（调 LLM 做意图→MQTT映射）
     Skill:    执行（发 MQTT 指令）
-    🤖 对话：机器人本地 SDK 内腾讯云端大模型处理（Agent 层不重复实现）
+    🤖 对话：机器人本地语音系统处理（Agent 层不重复实现）
 """
 
 import logging
@@ -37,6 +37,12 @@ import os
 import sys
 
 import yaml
+
+# 加固 stdin 编码，防止终端异常字节导致 UnicodeDecodeError 崩溃
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # ---------------------------------------------------------------------------
 # 依赖
@@ -257,7 +263,10 @@ def run_demo_mode(gateway: Gateway):
 
         # 用户选择
         print()
-        choice = input("  🎮 请选择 (1-{} / 打字 / q): ".format(len(DEMO_MENU))).strip()
+        try:
+            choice = input("  🎮 请选择 (1-{} / 打字 / q): ".format(len(DEMO_MENU))).strip()
+        except (UnicodeDecodeError, EOFError):
+            continue
 
         if not choice:
             continue
@@ -307,7 +316,10 @@ def run_interactive_mode(gateway: Gateway):
     print("=" * 60 + "\n")
 
     while True:
-        text = input("你: ").strip()
+        try:
+            text = input("你: ").strip()
+        except (UnicodeDecodeError, EOFError):
+            continue
         if not text:
             continue
         if text.lower() in ("/q", "/quit", "/exit"):
@@ -374,7 +386,7 @@ def main():
     print("=" * 60)
     print(f"  MQTT  → {mqtt_cfg['host']}:{mqtt_cfg['port']}")
     print(f"  LLM   → {llm_cfg['model']} @ {llm_cfg['base_url']}")
-    print(f"  Routes → {gateway._router._policy.pattern_count} 条路由规则")
+    print(f"  Routes → {gateway.pattern_count} 条路由规则")
     if event_watcher:
         print(f"  Events → {event_watcher.enabled_rule_count} 条事件规则（监听 MQTT info/often）")
     print("=" * 60)

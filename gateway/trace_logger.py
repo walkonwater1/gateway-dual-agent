@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections import defaultdict
 from typing import Any
 
 from shared.message import RuntimeMessage, RuntimeResult

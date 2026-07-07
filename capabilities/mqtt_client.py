@@ -151,6 +151,9 @@ class RobotMqttClient:
         self._connected = False
         self._on_status = None
 
+        # 自动重连：断连后 1s 开始重试，最大间隔 30s
+        self._client.reconnect_delay_set(min_delay=1, max_delay=30)
+
     # ------------------------------------------------------------------
     # 连接
     # ------------------------------------------------------------------
@@ -191,7 +194,10 @@ class RobotMqttClient:
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
         self._connected = False
-        logger.warning(f"MQTT 断开, rc={reason_code}")
+        if reason_code == 0:
+            logger.info("MQTT 正常断开")
+        else:
+            logger.warning(f"MQTT 意外断开 (rc={reason_code})，paho 将自动重连…")
 
     def _on_message(self, client, userdata, msg):
         if self._on_status:

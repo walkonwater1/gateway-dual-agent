@@ -4,7 +4,7 @@
 当 Router 关键词直接命中 interaction 类动作时，直接用 InteractionSkill 执行。
 否则走 IntentAgent(LLM) → 判断意图。
 
-注意：纯对话（chat）由机器人本地腾讯云端大模型处理，Agent 层不重复实现。
+注意：纯对话（chat）由机器人本地语音系统处理，Agent 层不重复实现。
 """
 import logging
 
@@ -38,7 +38,7 @@ class InteractionRuntime:
         direct_params = message.context.get("params", {})
 
         if direct_action in ("play_audio", "switch_emotion", "voice_wakeup",
-                              "volume", "led", "release_estop"):
+                              "volume", "led"):
             logger.info(f"InteractionRuntime: 直接执行 {direct_action}")
             return self._skill.execute("interaction", {
                 "action": direct_action,
@@ -55,10 +55,10 @@ class InteractionRuntime:
         logger.info(f"InteractionRuntime: LLM 理解 → intent={intent} action={action}")
 
         if intent == "chat" or intent == "unknown":
-            # 纯对话由机器人本地腾讯云端大模型处理，Agent 层不参与
+            # 纯对话由机器人本地语音系统处理，Agent 层不参与
             return RuntimeResult(
                 intent="chat",
-                reply="对话功能由机器人本地语音系统处理（腾讯云端大模型）",
+                reply="对话功能由机器人本地语音系统处理",
             )
         elif intent == "interaction":
             return self._skill.execute("interaction", {

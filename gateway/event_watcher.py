@@ -27,24 +27,21 @@ from typing import Any
 
 import yaml
 
+from capabilities.mqtt_client import LOCO_MODE_NAMES
+
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
 # MQTT 状态指令 ID
 # ============================================================================
+
 CMD_BATTERY_STATUS = 4002
 CMD_LOCO_MODE_STATUS = 4004
 CMD_HOST_STATUS = 4006
 CMD_MOTOR_STATUS = 4007
 CMD_DRIVER_STATUS = 4008
 CMD_HEARTBEAT = 8000
-
-# 运动模式枚举
-LOCO_MODE_NAMES = {
-    1: "still", 2: "ready", 3: "getup",
-    10: "stand", 20: "ppowalk", 21: "ampwalk", 22: "qpwalk",
-}
 
 
 class EventWatcher:

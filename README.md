@@ -40,9 +40,9 @@
 | **Runtime** | `runtimes/` | 编排所属 Agent、区分"直接执行"和"LLM 理解"两条路径 | 不直接操作硬件、不直接发 MQTT | ❌ |
 | **Agent** | `agents/` | 决策：调 LLM 做意图→MQTT映射、定参数 | 不直接发 MQTT | ✅ (仅 IntentAgent) |
 | **Skill** | `skills/` | 执行：将决策翻译为 MQTT 指令 | 不做决策、不判断 | ✅ |
-| **机器人本地** | SDK 内部 | 对话、ASR、TTS（腾讯云端大模型） | 闭环在 C++ 侧 | — |
-| **Capability** | `capabilities/` | MQTT 协议封装、topic 路由、QoS | 不含业务逻辑 | ❌ |
-| **Shared** | `shared/` | RuntimeMessage / RuntimeResult 数据协议、基类 | — | ❌ |
+| **机器人本地** | SDK 内部 | 对话、ASR、TTS | 闭环在 C++ 侧 | — |
+| **Capability** | `capabilities/` | MQTT 协议封装、topic 路由、QoS | 不含业务逻辑 | ✅ |
+| **Shared** | `shared/` | RuntimeMessage / RuntimeResult 数据协议、基类 | — | ✅ |
 
 > **核心原则：Agent 负责"用户想做什么"，Skill 负责"怎么让机器人做"。Gateway 是薄中枢，只路由不决策。**
 
@@ -350,10 +350,9 @@ InteractionSkill.execute(intent, params)
 ```
 agent_demo/
 ├── main.py                       # 启动入口（DI 组装 + 交互循环 + 演示菜单）
-├── step1_hello_mqtt.py           # 独立 MQTT 连通性测试（不依赖 LLM）
 ├── start.sh                      # 一键启动脚本（环境检查 + 依赖安装 + 启动）
 │
-├── gateway/                      # 中央路由与治理中枢 (11/13 模块)
+├── gateway/                      # 中央路由与治理中枢 (13/13 模块)
 │   ├── gateway.py                # 主入口 — 10步处理链路
 │   ├── input_adapter.py          # 多模态输入适配 (text/asr/robot_event)
 │   ├── router.py                 # 路由判断 — YAML关键词最长匹配
@@ -429,7 +428,9 @@ cp config.example.yaml config.local.yaml
 ### 8.3 先测 MQTT 连通性
 
 ```bash
-python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
+# 直接启动主程序，会自动检测 MQTT 连接
+python3 main.py --demo
+# 连接失败时会报错并退出，无需额外测试脚本
 ```
 
 观察机器人日志是否收到 `motion playback cmd`，确认 Bridge 链路通。
@@ -552,7 +553,7 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 ```
 Phase 1 ✅  MVP 链路     text→Gateway→Runtime→Agent→Skill→MQTT→机器人
-Phase 2 ✅  路由 YAML 化  54条规则可配置, Gateway 11/13模块
+Phase 2 ✅  路由 YAML 化  54条规则可配置, Gateway 13/13模块
 Phase 3 ✅  治理          Session/Priority/Safety/Trace/Conflict 全部实现
 Phase 4 ❌  智能          Knowledge(RAG) + Memory(四层) + Harness(回放)
 ```

@@ -40,21 +40,21 @@
 | 目录 | 设计要求 | 当前 demo | 状态 |
 |------|---------|----------|------|
 | `apps/` | 多模式启动入口（robot/interaction/nav/motion/replay） | ❌ 仅 `main.py` 单一入口 | ❌ |
-| `shared/` | 13 个公共模块（message/result/event/trace/session/context/base_*/registry/permission/logger/errors） | ⚠️ `message.py` (升级) + `event.py` (新) + `session.py` (新) + `base.py` | ⚠️ |
-| `gateway/` | 13 个模块 | ✅ **全部13模块已实现** (2个默认关闭) | ✅ |
+| `shared/` | 13 个公共模块（message/result/event/trace/session/context/base_*/registry/permission/logger/errors） | ✅ `message.py` (升级) + `event.py` (新) + `session.py` (新) + `base.py` | ✅ |
+| `gateway/` | 13 个模块 | ✅ **全部13模块已实现** | ✅ |
 | `runtimes/` | 三个子目录，每个含 ~10 个内部模块 | ⚠️ 三个单文件，无内部编排 | ⚠️ |
 | `agents/` | 三组 20 个 Agent（interaction/nav/motion） | ⚠️ 3 个扁平 Agent | ⚠️ |
 | `skills/` | 三组 13 个 Skill | ⚠️ 3 个扁平 Skill | ⚠️ |
 | `knowledge/` | RAG 系统（document/vector/retrieve/index/embedding/rerank/policy/cache） | ❌ | ❌ |
 | `memory/` | 四层记忆（working/short-term/local-long/cloud-long） | ❌ | ❌ |
-| `capabilities/` | 三层（edge/cloud/robot） | ⚠️ 仅 `mqtt_client.py` | ⚠️ |
+| `capabilities/` | 三层（edge/cloud/robot） | ✅ `mqtt_client.py` (368行，完整 Bridge 协议) | ✅ |
 | `harness/` | 仿真/回放/评估系统 | ❌ | ❌ |
-| `configs/` | 分模块 YAML 配置（10+ 文件） | ⚠️ `config/routes.yaml` (新) + `config.example.yaml` (升级) | ⚠️ |
+| `configs/` | 分模块 YAML 配置（10+ 文件） | ✅ `config/routes.yaml` (54条规则) + `config/event_rules.yaml` (6条规则) + `config.example.yaml` | ✅ |
 | `logs/` | 结构化日志 + Trace | ⚠️ TraceLogger 已实现，但未落地到文件 | ⚠️ |
 | `tests/` | 单元测试 | ❌ | ❌ |
 | `main.py` | 统一入口 | `main.py` — DI 组装 + 交互循环 | ✅ |
 
-**Framework 达标率：2/14 完整 / 7/14 部分 / 5/14 缺失**
+**Framework 达标率：4/14 完整 / 7/14 部分 / 3/14 缺失**
 
 ---
 
@@ -139,25 +139,25 @@ Step 12  ❌  支持多模态输入和系统事件
 
 ## 8. 后续补齐建议
 
-### 短期（Phase 2 收尾）
+### 短期（Phase 3 收尾 — 接线）
 
 | 优先级 | 任务 | 影响范围 |
 |--------|------|---------|
-| P0 | 路由表 YAML 化（DIRECT_ROUTES → config/routes.yaml） | `gateway/router.py` |
-| P1 | MQTT 状态反馈闭环（订阅 info/often，Agent 感知机器人状态） | `capabilities/` + 各 Agent |
+| P1 | MQTT 自动重连（disconnect 后 reconnect） | `capabilities/mqtt_client.py` |
 | P1 | Navigation Runtime 充实（加导航状态查询+回传） | `runtimes/navigation_runtime.py` |
+| P1 | PriorityManager 接入 Gateway 流程（当前 Step 4 被跳过） | `gateway/gateway.py` |
+| P2 | EventBus/ResultAggregator 接入 Gateway 流程（已创建但未调用） | `gateway/` |
+| P2 | TraceLogger 落地到文件（当前仅内存） | `gateway/trace_logger.py` |
 
-### 中期（Phase 3 治理）
+### 中期（Phase 3 治理完善）
 
 | 优先级 | 任务 | 影响范围 |
 |--------|------|---------|
-| P2 | Session Router（多用户隔离） | `gateway/` + `shared/session.py` |
-| P2 | Priority Manager（急停>遥操>安全>导航>交互） | `gateway/` |
-| P2 | Trace Logger（全链路 trace_id） | `gateway/` + `shared/trace.py` |
-| P3 | Safety Gate（请求级安全过滤） | `gateway/` |
-| P3 | Conflict Resolver | `gateway/` |
-| P3 | Event Bus | `gateway/` |
-| P3 | Result Aggregator | `gateway/` |
+| P2 | MQTT 指令级反馈闭环（ack/完成/拒绝通知） | `capabilities/` + 各 Skill |
+| P2 | EventBus 通配符 `"*"` 订阅实现 | `gateway/event_bus.py` |
+| P2 | 多用户 Session 识别（非 hardcode "default"） | `gateway/session_router.py` |
+| P3 | Safety Gate 规则 YAML 化（当前 10 条硬编码） | `gateway/safety_gate.py` + YAML |
+| P3 | 配置外提（CHAT_KEYWORDS、INTENT_PROMPT 等硬编码值） | `agents/` + `config/` |
 
 ### 长期（Phase 4 智能）
 

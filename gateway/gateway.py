@@ -25,10 +25,7 @@ Gateway — 中央路由与治理中枢。
 from __future__ import annotations
 
 import logging
-from typing import Any
-
 from shared.message import RuntimeMessage, RuntimeResult
-from shared.event import RuntimeEvent
 
 from gateway.router import Router
 from gateway.route_policy import RoutePolicy
@@ -144,8 +141,7 @@ class Gateway:
 
         # Step 4: 优先级管理
         if self._priority_manager:
-            # 优先级由 Router 在路由时设置，此处记录
-            pass
+            self._priority_manager.set_active(session_id, message.priority)
 
         # Step 5: 安全过滤
         if self._safety_gate and self._safety_gate.enabled:
@@ -312,6 +308,11 @@ class Gateway:
     @property
     def runtime_router(self) -> RuntimeRouter:
         return self._runtime_router
+
+    @property
+    def pattern_count(self) -> int:
+        """YAML 路由规则数量。"""
+        return self._router._policy.pattern_count
 
     def register_runtime(self, name: str, runtime):
         """动态注册 Runtime。"""

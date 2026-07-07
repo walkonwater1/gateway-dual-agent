@@ -146,7 +146,7 @@ def build_architecture():
     dot.node("llm", "🤖 LLM (意图识别)\nqwen2.5:0.5b\n(ollama)", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
     dot.edge("ia", "llm", "意图→MQTT映射", color=C_LLM, style="dashed")
     # 对话由机器人本地腾讯大模型处理
-    dot.node("tencent_note", "🗣️ 机器人本地语音\n  腾讯云端大模型\n  (对话/ASR/TTS)\n  SDK内部闭环", shape="note",
+    dot.node("tencent_note", "🗣️ 机器人本地语音\n  (对话/ASR/TTS)\n  SDK内部闭环", shape="note",
              fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
 
     style_legend(dot)
@@ -183,7 +183,7 @@ def build_request_flow():
     dot.node("b_llm", "LLM\nqwen2.5:0.5b", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
     dot.node("b_result", "LLM 返回 JSON\n{intent, action, params}", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
     dot.node("b_split", "intent?", shape="diamond", fillcolor=C_AGENT, fontcolor=C_TEXT)
-    dot.node("b_chat", "机器人本地语音\n(腾讯云端大模型)", shape="note", fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
+    dot.node("b_chat", "机器人本地语音", shape="note", fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
     dot.node("b_motion", "→ Gateway._reroute()\n→ MotionRuntime", shape="box", fillcolor=C_HIGHLIGHT)
 
     # MQTT
@@ -262,7 +262,7 @@ def build_routing_tree():
 
     # Interaction → LLM fallback
     dot.node("intent_agent", "IntentAgent (LLM)", shape="box", fillcolor=C_AGENT, fontsize="10")
-    dot.node("llm_chat", "chat\n→ 机器人本地语音\n(腾讯云端大模型)", shape="note", fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
+    dot.node("llm_chat", "chat\n→ 机器人本地语音", shape="note", fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
     dot.node("llm_motion", "motion/navigation\n→ Gateway._reroute()\n→ 回到 motion/nav", shape="box", fillcolor=C_HIGHLIGHT, fontsize="9")
     dot.node("llm_inter", "interaction\n→ InteractionSkill", shape="box", fillcolor=C_AGENT, fontsize="9")
 

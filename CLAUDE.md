@@ -33,7 +33,7 @@ GitHub: `github.com/walkonwater1/gateway-dual-agent`
     → Agent → Skill → MQTT → Bridge → ROS2 → 机器人
 ```
 
-### Gateway 模块 (11/13, 85%)
+### Gateway 模块 (13/13, 100%)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -84,7 +84,7 @@ GitHub: `github.com/walkonwater1/gateway-dual-agent`
 - **Gateway 薄中枢**: 不调 LLM、不做业务决策、不发 MQTT
 - **YAML 配置化路由**: `config/routes.yaml` 54条规则, 改规则免改代码
 - **模块可插拔**: 每个Gateway模块可通过config开关
-- **DialogueAgent/DialogueSkill 已删除**: 机器人本体 SDK 内置腾讯云端大模型处理对话/ASR/TTS，Agent 层不重复实现
+- **DialogueAgent/DialogueSkill 已删除**: 机器人本体 SDK 内置语音系统处理对话/ASR/TTS，Agent 层不重复实现
 - **跨 Runtime 通信走 Gateway**: RuntimeRouter.reroute()，禁止 Runtime 间直接互调
 - **LLM 仅路径B调用**: 关键词命令不依赖NUC, NUC离线时关键词命令仍可用
 

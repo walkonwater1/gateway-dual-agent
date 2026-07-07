@@ -94,84 +94,17 @@ class IntentAgent(BaseAgent):
     def _fast_path(self, text: str) -> RuntimeResult | None:
         t = text.strip()
 
-        # 1. 日志模拟事件检测 — 模拟 MQTT 日志喂给 Gateway 的场景
-        sim = self._simulate_log_event(t)
-        if sim:
-            return sim
-
-        # 2. 精确/前缀匹配聊天关键词
+        # 1. 精确/前缀匹配聊天关键词
         if any(c in t for c in self._CHAT_KEYWORDS):
             return RuntimeResult(intent="chat",
                                 data={"action": "chat", "params": {}})
 
-        # 3. 疑问句式检测：包含疑问词且不以动作动词开头
+        # 2. 疑问句式检测：包含疑问词且不以动作动词开头
         if any(q in t for q in self._QUESTION_PATTERNS):
             # 排除明显是动作指令的（如"怎么走"→navigation）
             if not any(t.startswith(v) for v in ("走", "去", "到", "前进", "后退", "停")):
                 return RuntimeResult(intent="chat",
                                     data={"action": "chat", "params": {}})
-
-        return None
-
-    @staticmethod
-    def _simulate_log_event(text: str) -> RuntimeResult | None:
-        """识别模拟日志事件输入（如 "电量低于15%" → 导航回充电站）。
-
-        支持格式:
-          - 电量/电池 低于/< X%  → navigation: 导航回充电站
-          - 电机温度 > X         → motion: 急停
-          - 电机过热              → motion: 急停
-        """
-        import re
-
-        # --- 电池低电量 → 导航回充电站 ---
-        battery_match = re.match(
-            r"(电量|电池|battery)\s*(低于|<|小于|<=)\s*(\d+)\s*%?",
-            text, re.IGNORECASE
-        )
-        if battery_match:
-            pct = int(battery_match.group(3))
-            return RuntimeResult(
-                intent="navigation",
-                data={
-                    "action": "navigate",
-                    "params": {"target": "充电站"},
-                },
-                reply=f"🔋 模拟日志事件: 电量 {pct}% < 20% → 自动导航回充电站",
-            )
-
-        # --- 电机过热 → 急停 ---
-        motor_match = re.match(
-            r"(电机|马达|motor)\s*(温度)?\s*(>|大于|超过|>=|过热)\s*(\d+)?\s*°?C?",
-            text, re.IGNORECASE
-        )
-        if motor_match:
-            temp = motor_match.group(4)
-            temp_str = f" {temp}°C" if temp else ""
-            return RuntimeResult(
-                intent="motion",
-                data={
-                    "action": "stop",
-                    "params": {},
-                },
-                reply=f"🔥 模拟日志事件: 电机温度{temp_str}超过安全阈值 → 急停",
-            )
-
-        # --- CPU 过热 → 交互通知 ---
-        cpu_match = re.match(
-            r"(CPU|cpu)\s*(温度)?\s*(>|大于|超过|>=)\s*(\d+)\s*°?C?",
-            text, re.IGNORECASE
-        )
-        if cpu_match:
-            temp = cpu_match.group(4)
-            return RuntimeResult(
-                intent="interaction",
-                data={
-                    "action": "switch_emotion",
-                    "params": {},
-                },
-                reply=f"🌡️ 模拟日志事件: CPU 温度 {temp}°C 过高 → 切换表情提醒",
-            )
 
         return None
 

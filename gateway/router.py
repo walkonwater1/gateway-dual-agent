@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 
 from shared.message import RuntimeMessage
-from gateway.route_policy import RoutePolicy, RouteMatch
+from gateway.route_policy import RoutePolicy
 
 logger = logging.getLogger(__name__)
 
