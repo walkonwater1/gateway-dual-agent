@@ -226,10 +226,21 @@ class Gateway:
         return result
 
     def handle_event(self, event: dict, session_id: str = "system") -> RuntimeResult:
-        """处理系统/机器人事件。
+        """处理系统/机器人事件 — EventWatcher 和外部系统的主入口。
+
+        支持两种事件格式:
+
+        1. 传统事件（estop/estop_released）:
+           {"type": "estop", "active": true}
+           → 硬编码路由到 motion
+
+        2. EventWatcher 结构化事件:
+           {"type": "low_battery_return_to_charge", "target": "navigation",
+            "action": "navigate", "params": {"target": "充电站"}, "priority": "high"}
+           → 通过 RuntimeRouter.dispatch() 分发，action/params 注入 message.context
 
         Args:
-            event: 事件字典 {"type": "estop", ...}
+            event: 事件字典
             session_id: 会话 ID
 
         Returns:
@@ -239,16 +250,45 @@ class Gateway:
         trace_id = self._trace_logger.start_trace(message)
         message.trace_id = trace_id
 
-        logger.info(f"Gateway: 收到事件 {event.get('type')}")
+        event_type = event.get("type", "unknown")
+        logger.info(f"Gateway: 收到事件 {event_type}")
 
-        # 事件直接路由到对应 Runtime（不经过 Router）
-        event_type = event.get("type", "")
-        if event_type in ("estop", "estop_released"):
-            runtime_name = "motion"
+        # 判断事件路由方式
+        target = event.get("target", "")
+        action = event.get("action", "")
+        params = event.get("params", {})
+
+        if target and action:
+            # === EventWatcher 结构化事件 ===
+            # 将 action/params 注入 message.context，下游 Agent/Skill 读取
+            message.context["action"] = action
+            message.context["params"] = params
+
+            # 事件指定的优先级
+            event_priority = event.get("priority", "")
+            if event_priority:
+                message.priority = event_priority
+
+            self._trace_logger.log_route(trace_id, target)
+            self._trace_logger.log_dispatch(trace_id, target)
+
+            logger.info(
+                f"Gateway: 事件路由 → {target}"
+                f" action={action} params={params}"
+                f" priority={message.priority}"
+            )
+            result = self._runtime_router.dispatch(target, message)
+
+        elif event_type in ("estop", "estop_released"):
+            # === 传统急停事件 ===
+            result = self._runtime_router.dispatch("motion", message)
+
         else:
-            runtime_name = "interaction"
+            # === 未分类事件 → interaction（由 IntentAgent 判断） ===
+            result = self._runtime_router.dispatch("interaction", message)
+            logger.info(f"Gateway: 未分类事件 {event_type} → interaction")
 
-        result = self._runtime_router.dispatch(runtime_name, message)
+        self._trace_logger.log_result(trace_id, result)
         self._trace_logger.finalize_trace(trace_id, result)
         return result
 

@@ -34,3 +34,12 @@ gateway:
     conflict_resolver: true
     event_bus: false             # Runtime 间事件通讯（Phase 3）
     result_aggregator: false     # 多 Runtime 结果汇聚（Phase 3）
+
+# --------------------------------------------------------------------------
+# EventWatcher — MQTT 日志轮询 + 事件驱动
+# 监听机器人 info/often 状态消息，检测模式（低电量/过热），生成事件喂给 Gateway
+# --------------------------------------------------------------------------
+event_watcher:
+  enabled: false                 # 默认关闭，需要时改为 true
+  rules_yaml: "config/event_rules.yaml"
+  # 测试模拟: 终端输入 "电量低于15%" 即可模拟低电量事件（不依赖 MQTT）

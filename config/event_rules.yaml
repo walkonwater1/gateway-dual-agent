@@ -1,0 +1,137 @@
+# ============================================================================
+# EventWatcher 规则 — MQTT 日志轮询 → Gateway 事件
+# ============================================================================
+#
+# 机器人每秒通过 MQTT info/often 上报状态（电池/电机/CPU/运动模式）。
+# EventWatcher 解析这些状态消息，根据以下规则检测模式，生成事件喂给 Gateway。
+#
+# 规则格式:
+#   name: 唯一标识
+#   description: 人类可读描述
+#   enabled: true/false（可单独关闭某条规则）
+#   trigger: 触发条件
+#     topic: MQTT 主题（info/often, eir/basic_heartbeat_callback）
+#     command: 指令 ID（4002=电池, 4004=运动模式, 4006=CPU, 4007=电机, 4008=驱动, 8000=心跳）
+#     field: 如何从 commandData 提取值
+#       "soc"     → commandData[1]（电池百分比）
+#       "value"   → commandData 本身（如运动模式 int）
+#       "max"     → max(commandData)（如电机最高温度）
+#       "index:N" → commandData[N]
+#   condition:
+#     operator: lt / gt / eq / ne
+#     value: 阈值
+#   debounce: 去抖间隔（秒），此时间内同一规则不重复触发
+#   action: 触发后执行
+#     target: navigation / motion / interaction
+#     context: {action: ..., params: {...}}（写入 RuntimeMessage.context）
+#     priority: emergency / high / normal / low
+#
+# 修改此文件后重启 agent_demo 即可生效。
+# ============================================================================
+
+rules:
+  # --------------------------------------------------------------------------
+  # 电池低电量 → 自动导航回充电站
+  # --------------------------------------------------------------------------
+  - name: low_battery_return_to_charge
+    description: "电量 < 20% 自动导航回充电站补电"
+    enabled: true
+    trigger:
+      topic: "info/often"
+      command: 4002        # CMD_BATTERY_STATUS
+      field: soc            # commandData[1] = 电量百分比
+    condition:
+      operator: lt
+      value: 20
+    debounce: 300           # 5分钟内不重复触发
+    action:
+      target: navigation
+      context:
+        action: navigate
+        params:
+          target: "充电站"
+      priority: high
+
+  # --------------------------------------------------------------------------
+  # 电池恢复 → 通知（可选）
+  # --------------------------------------------------------------------------
+  - name: battery_recovered
+    description: "电量恢复到 80% 以上通知"
+    enabled: false          # 默认关闭，机器人本地语音会自己报
+    trigger:
+      topic: "info/often"
+      command: 4002
+      field: soc
+    condition:
+      operator: gt
+      value: 80
+    debounce: 600
+    action:
+      target: interaction
+      context:
+        action: switch_emotion
+        params: {}
+      priority: low
+
+  # --------------------------------------------------------------------------
+  # 电机过热 → 急停保护
+  # --------------------------------------------------------------------------
+  - name: motor_overheat_estop
+    description: "任一电机温度 > 80°C 触发急停"
+    enabled: true
+    trigger:
+      topic: "info/often"
+      command: 4007        # CMD_MOTOR_STATUS
+      field: max            # max(commandData) = 最高电机温度
+    condition:
+      operator: gt
+      value: 80
+    debounce: 60            # 1分钟内不重复触发
+    action:
+      target: motion
+      context:
+        action: stop
+        params: {}
+      priority: emergency
+
+  # --------------------------------------------------------------------------
+  # 驱动过热 → 降级通知
+  # --------------------------------------------------------------------------
+  - name: driver_overheat_warning
+    description: "任一驱动温度 > 70°C 发出警告"
+    enabled: true
+    trigger:
+      topic: "info/often"
+      command: 4008        # CMD_DRIVER_STATUS
+      field: max            # max(commandData) = 最高驱动温度
+    condition:
+      operator: gt
+      value: 70
+    debounce: 120
+    action:
+      target: interaction
+      context:
+        action: switch_emotion
+        params: {}
+      priority: high
+
+  # --------------------------------------------------------------------------
+  # CPU 过热 → 通知
+  # --------------------------------------------------------------------------
+  - name: cpu_overheat_warning
+    description: "CPU 温度 > 75°C 发出警告"
+    enabled: true
+    trigger:
+      topic: "info/often"
+      command: 4006        # CMD_HOST_STATUS
+      field: index:0        # commandData[0] = CPU温度
+    condition:
+      operator: gt
+      value: 75
+    debounce: 120
+    action:
+      target: interaction
+      context:
+        action: switch_emotion
+        params: {}
+      priority: high

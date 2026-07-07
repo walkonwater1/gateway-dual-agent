@@ -71,6 +71,7 @@ from gateway.safety_gate import SafetyGate
 from gateway.event_bus import EventBus
 from gateway.conflict_resolver import ConflictResolver
 from gateway.result_aggregator import ResultAggregator
+from gateway.event_watcher import EventWatcher
 
 # ---------------------------------------------------------------------------
 # 配置
@@ -181,7 +182,14 @@ def build_app(cfg: dict):
         result_aggregator=result_aggregator,
     )
 
-    return gateway, mqtt
+    # --- EventWatcher（MQTT 日志轮询 + 事件生成） ---
+    event_watcher = None
+    ew_cfg = cfg.get("event_watcher", {})
+    if ew_cfg.get("enabled", False):
+        rules_path = os.path.join(BASE_DIR, ew_cfg.get("rules_yaml", "config/event_rules.yaml"))
+        event_watcher = EventWatcher(gateway, rules_path)
+
+    return gateway, mqtt, event_watcher
 
 
 # ============================================================================
@@ -340,7 +348,7 @@ def main():
     logger = logging.getLogger("main")
 
     logger.info("正在启动 Agent Runtime...")
-    gateway, mqtt = build_app(cfg)
+    gateway, mqtt, event_watcher = build_app(cfg)
 
     # 连接 MQTT
     if not mqtt.connect():
@@ -349,6 +357,14 @@ def main():
         print(f"  机器人 IP: {cfg['mqtt']['host']}:{cfg['mqtt']['port']}")
         print(f"  mosquitto 是否在运行？Bridge 是否在运行？\n")
         sys.exit(1)
+
+    # 注册 MQTT 状态回调 → EventWatcher
+    if event_watcher:
+        mqtt.on_status(event_watcher.on_mqtt_message)
+        logger.info(
+            f"EventWatcher: 已注册 MQTT 回调"
+            f" ({event_watcher.enabled_rule_count}/{event_watcher.rule_count} 规则启用)"
+        )
 
     mqtt_cfg = cfg["mqtt"]
     llm_cfg = cfg["llm"]
@@ -359,6 +375,8 @@ def main():
     print(f"  MQTT  → {mqtt_cfg['host']}:{mqtt_cfg['port']}")
     print(f"  LLM   → {llm_cfg['model']} @ {llm_cfg['base_url']}")
     print(f"  Routes → {gateway._router._policy.pattern_count} 条路由规则")
+    if event_watcher:
+        print(f"  Events → {event_watcher.enabled_rule_count} 条事件规则（监听 MQTT info/often）")
     print("=" * 60)
 
     # 判断模式
