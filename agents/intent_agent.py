@@ -71,14 +71,40 @@ class IntentAgent(BaseAgent):
 
         return self._llm_path(text)
 
+    # 聊天/问答类关键词 — 命中则直接返回 chat，不调 LLM
+    _CHAT_KEYWORDS = (
+        # 问候
+        "你好", "谢谢", "再见", "早", "晚安",
+        # 身份/能力
+        "你是谁", "你能做什么", "你叫什么", "你的名字",
+        # 天气/时间/知识问答
+        "天气", "几点了", "几点", "日期", "今天几号", "星期",
+        "温度", "湿度", "会不会下雨", "冷不冷", "热不热",
+        # 闲聊
+        "爱你", "我喜欢你", "你真", "好可爱", "你真棒", "你真聪明",
+        "讲个笑话", "讲笑话", "唱首歌", "唱个歌",
+    )
+
+    # 疑问句式关键词 — 包含这些的问句大概率是 chat
+    _QUESTION_PATTERNS = (
+        "怎么样", "是什么", "为什么", "什么意思", "怎么", "吗",
+        "谁", "哪里", "哪儿", "什么时候", "多少", "能不能",
+    )
+
     def _fast_path(self, text: str) -> RuntimeResult | None:
         t = text.strip()
 
-        # 纯聊天类
-        chats = ("你好", "谢谢", "再见", "早", "晚安", "你是谁", "你能做什么")
-        if any(t.startswith(c) for c in chats):
+        # 1. 精确/前缀匹配聊天关键词
+        if any(c in t for c in self._CHAT_KEYWORDS):
             return RuntimeResult(intent="chat",
                                 data={"action": "chat", "params": {}})
+
+        # 2. 疑问句式检测：包含疑问词且不以动作动词开头
+        if any(q in t for q in self._QUESTION_PATTERNS):
+            # 排除明显是动作指令的（如"怎么走"→navigation）
+            if not any(t.startswith(v) for v in ("走", "去", "到", "前进", "后退", "停")):
+                return RuntimeResult(intent="chat",
+                                    data={"action": "chat", "params": {}})
 
         return None
 
