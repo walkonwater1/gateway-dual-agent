@@ -102,7 +102,7 @@ class Gateway:
         self._priority_manager = kwargs.get("priority_manager")
         self._safety_gate = kwargs.get("safety_gate")
         self._conflict_resolver = kwargs.get("conflict_resolver")
-        self._result_aggregator = kwargs.get("result_aggregator")
+        self._result_aggregator = None  # 由 set_result_aggregator() 后注入
         self._event_bus = kwargs.get("event_bus", EventBus())
 
     # ==================================================================
@@ -151,6 +151,9 @@ class Gateway:
             })
             if not safety_result.allowed:
                 self._trace_logger.log_safety_block(trace_id, safety_result.reason)
+                self._event_bus.emit("safety.blocked", "gateway", {
+                    "text": text, "reason": safety_result.reason,
+                })
                 result = RuntimeResult(
                     success=False,
                     reply=safety_result.reason,
@@ -163,6 +166,9 @@ class Gateway:
         # Step 6: 路由判断
         runtime_name = self._router.route(message)
         self._trace_logger.log_route(trace_id, runtime_name)
+        self._event_bus.emit("gateway.route", "gateway", {
+            "text": text, "runtime": runtime_name, "priority": message.priority,
+        })
 
         # Step 7: 冲突检测
         if self._conflict_resolver and self._conflict_resolver.enabled:
@@ -200,12 +206,26 @@ class Gateway:
         self._trace_logger.log_dispatch(trace_id, runtime_name)
         result = self._runtime_router.dispatch(runtime_name, message)
         self._trace_logger.log_result(trace_id, result)
+        self._event_bus.emit(f"{runtime_name}.completed", runtime_name, {
+            "intent": result.intent, "success": result.success,
+        })
 
         # Step 9: 二次路由
         if runtime_name == "interaction" and result.intent in ("motion", "navigation"):
             self._trace_logger.log_reroute(trace_id, result.intent)
-            result = self._runtime_router.reroute(result.intent, message, result)
-            self._trace_logger.log_result(trace_id, result)
+            reroute_result = self._runtime_router.reroute(result.intent, message, result)
+            self._trace_logger.log_result(trace_id, reroute_result)
+            self._event_bus.emit(f"{result.intent}.completed", result.intent, {
+                "success": reroute_result.success,
+            })
+            # 聚合 Interaction 的 LLM 理解 + 目标 Runtime 的执行结果
+            if self._result_aggregator and self._result_aggregator.enabled:
+                result = self._result_aggregator.aggregate({
+                    "interaction": result,
+                    result.intent: reroute_result,
+                })
+            else:
+                result = reroute_result
 
         # Step 10: 记录 Session 状态
         if self._session_router:
@@ -277,6 +297,11 @@ class Gateway:
 
         elif event_type in ("estop", "estop_released"):
             # === 传统急停事件 ===
+            self._event_bus.emit(
+                "safety.estop" if event_type == "estop" else "safety.estop_released",
+                "gateway",
+                {"active": event_type == "estop"},
+            )
             result = self._runtime_router.dispatch("motion", message)
 
         else:
@@ -313,6 +338,10 @@ class Gateway:
     def pattern_count(self) -> int:
         """YAML 路由规则数量。"""
         return self._router._policy.pattern_count
+
+    def set_result_aggregator(self, aggregator):
+        """后注入 ResultAggregator（需 runtime_router，Gateway 构造后才可用）。"""
+        self._result_aggregator = aggregator
 
     def register_runtime(self, name: str, runtime):
         """动态注册 Runtime。"""

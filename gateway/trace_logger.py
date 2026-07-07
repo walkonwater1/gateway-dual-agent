@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
+from datetime import date
 from typing import Any
 
 from shared.message import RuntimeMessage, RuntimeResult
@@ -41,9 +43,12 @@ class TraceLogger:
         trace = tracer.get_trace(trace_id)
     """
 
-    def __init__(self, max_traces: int = 1000):
+    def __init__(self, max_traces: int = 1000, log_dir: str | None = None):
         self._traces: dict[str, dict] = {}
         self._max_traces = max_traces
+        self._log_dir = log_dir
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Trace 生命周期
@@ -104,6 +109,10 @@ class TraceLogger:
             f"TraceLogger: trace {trace_id[:8]} 完成 "
             f"({len(trace['events'])} events, {duration}ms)"
         )
+
+        # 文件持久化
+        if self._log_dir:
+            self._write_to_file(trace)
 
     # ------------------------------------------------------------------
     # 事件记录
@@ -188,6 +197,16 @@ class TraceLogger:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    def _write_to_file(self, trace: dict):
+        """追加一条 trace 到 JSONL 日志文件。"""
+        try:
+            filename = f"trace_{date.today().isoformat()}.jsonl"
+            filepath = os.path.join(self._log_dir, filename)
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write(json.dumps(trace, ensure_ascii=False, default=str) + "\n")
+        except Exception as e:
+            logger.warning(f"TraceLogger: 写入文件失败: {e}")
 
     def _add_event(self, trace: dict, event_type: str, payload: dict):
         trace["events"].append({

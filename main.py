@@ -147,7 +147,9 @@ def build_app(cfg: dict):
         )
 
     # --- Gateway 模块（按配置开关） ---
-    trace_logger = TraceLogger()
+    trace_logger = TraceLogger(
+        log_dir=os.path.join(BASE_DIR, "logs"),
+    )
 
     session_router = None
     if modules_cfg.get("session_router", True):
@@ -167,10 +169,7 @@ def build_app(cfg: dict):
             priority_manager=priority_manager,
         )
 
-    event_bus = EventBus(enabled=modules_cfg.get("event_bus", False))
-    result_aggregator = ResultAggregator(
-        enabled=modules_cfg.get("result_aggregator", False),
-    )
+    event_bus = EventBus(enabled=modules_cfg.get("event_bus", True))
 
     # --- Gateway ---
     gateway = Gateway(
@@ -185,8 +184,13 @@ def build_app(cfg: dict):
         safety_gate=safety_gate,
         conflict_resolver=conflict_resolver,
         event_bus=event_bus,
-        result_aggregator=result_aggregator,
     )
+    # ResultAggregator 注入 runtime_router（Gateway 构造后）
+    result_aggregator = ResultAggregator(
+        enabled=modules_cfg.get("result_aggregator", True),
+        runtime_router=gateway.runtime_router,
+    )
+    gateway.set_result_aggregator(result_aggregator)
 
     # --- EventWatcher（MQTT 日志轮询 + 事件生成） ---
     event_watcher = None
@@ -308,16 +312,19 @@ def run_demo_mode(gateway: Gateway):
 def run_interactive_mode(gateway: Gateway):
     """交互模式：自由文本输入。"""
 
+    current_session = "default"
+    sessions: set[str] = {"default"}
+
     print("\n" + "=" * 60)
     print("  🤖 Agent Runtime — 交互模式")
     print("=" * 60)
     print("  直接输入指令或对话: cqm1 | 前进 | 急停 | 四川话 | 换个表情 | 你好 ...")
-    print("  输入 /menu 进入菜单模式 | /trace 查看最近链路 | /q 退出")
+    print("  命令: /menu | /trace | /session <name> | /session list | /session new | /q")
     print("=" * 60 + "\n")
 
     while True:
         try:
-            text = input("你: ").strip()
+            text = input(f"[{current_session}] 你: ").strip()
         except (UnicodeDecodeError, EOFError):
             continue
         if not text:
@@ -326,7 +333,7 @@ def run_interactive_mode(gateway: Gateway):
             print("再见！👋")
             break
         if text.lower() == "/menu":
-            return "menu"  # 切换到菜单模式
+            return "menu"
         if text.lower() == "/trace":
             traces = gateway.trace_logger.get_recent_traces(5)
             if not traces:
@@ -336,8 +343,29 @@ def run_interactive_mode(gateway: Gateway):
                       f" → {len(t['events'])} events, {t.get('total_duration_ms', '?')}ms")
             print()
             continue
+        if text.lower().startswith("/session"):
+            parts = text.split(None, 1)
+            if len(parts) == 1:
+                print(f"  当前 session: {current_session}")
+                print(f"  活动 session: {', '.join(sorted(sessions))}")
+                print(f"  用法: /session <name> | /session list | /session new")
+            elif parts[1] == "list":
+                print(f"  活动 session ({len(sessions)}): {', '.join(sorted(sessions))}")
+            elif parts[1] == "new":
+                import uuid as _uuid
+                new_name = f"session_{_uuid.uuid4().hex[:6]}"
+                sessions.add(new_name)
+                current_session = new_name
+                print(f"  ✓ 已切换到新 session: {current_session}")
+            else:
+                new_name = parts[1].strip()
+                sessions.add(new_name)
+                current_session = new_name
+                print(f"  ✓ 已切换到 session: {current_session}")
+            print()
+            continue
 
-        result = gateway.handle_text(text)
+        result = gateway.handle_text(text, session_id=current_session)
         if result.reply:
             print(f"🤖: {result.reply}")
         if result.error:
@@ -387,6 +415,8 @@ def main():
     print(f"  MQTT  → {mqtt_cfg['host']}:{mqtt_cfg['port']}")
     print(f"  LLM   → {llm_cfg['model']} @ {llm_cfg['base_url']}")
     print(f"  Routes → {gateway.pattern_count} 条路由规则")
+    if gateway.event_bus.enabled:
+        print(f"  EventBus → ON ({gateway.event_bus.subscriber_count} 订阅者)")
     if event_watcher:
         print(f"  Events → {event_watcher.enabled_rule_count} 条事件规则（监听 MQTT info/often）")
     print("=" * 60)
