@@ -145,7 +145,7 @@ def build_architecture():
     # LLM 标注（仅 IntentAgent 调用，做意图→MQTT指令映射）
     dot.node("llm", "🤖 LLM (意图识别)\nqwen2.5:0.5b\n(ollama)", shape="box", fillcolor=C_LLM, fontcolor="#0D1117")
     dot.edge("ia", "llm", "意图→MQTT映射", color=C_LLM, style="dashed")
-    # 对话由机器人本地腾讯大模型处理
+    # 对话由机器人本地语音系统处理
     dot.node("tencent_note", "🗣️ 机器人本地语音\n  (对话/ASR/TTS)\n  SDK内部闭环", shape="note",
              fillcolor="#161B22", fontcolor=C_HIGHLIGHT, fontsize="9")
 
@@ -497,7 +497,7 @@ def build_layers():
         c.node("l3_ia", "IntentAgent\nLLM 意图→MQTT映射", fillcolor=C_AGENT)
         c.node("l3_ma", "MotionAgent\n运动决策", fillcolor=C_AGENT)
         c.node("l3_na", "NavigationAgent\n导航决策", fillcolor=C_AGENT)
-        c.node("l3_rule", "✅ 调LLM(仅意图映射)  ❌ 不直接发MQTT\n对话由机器人本地腾讯大模型处理", shape="plaintext",
+        c.node("l3_rule", "✅ 调LLM(仅意图映射)  ❌ 不直接发MQTT\n对话由机器人本地语音系统处理", shape="plaintext",
                fontcolor=C_LLM, fontsize="9")
 
     # Layer 5: Skill
@@ -609,7 +609,7 @@ def build_call_chain():
         c.node("irt_check", 'context["action"] 有值?', shape="diamond", fillcolor=C_AGENT, fontsize="9")
         c.node("irt_direct", "直接执行 InteractionSkill\n(play_audio/switch_emotion/\nvoice_wakeup/volume/led)", shape="box", fillcolor=C_SKILL)
         c.node("irt_llm", "调 IntentAgent (LLM)", shape="box", fillcolor=C_AGENT)
-        c.node("irt_llm_out", "LLM 返回:\nchat→机器人本地语音(腾讯)\ninteraction→InteractionSkill\nmotion/nav→回Gateway二次路由", shape="box", fillcolor=C_AGENT, fontsize="9")
+        c.node("irt_llm_out", "LLM 返回:\nchat→机器人本地语音系统\ninteraction→InteractionSkill\nmotion/nav→回Gateway二次路由", shape="box", fillcolor=C_AGENT, fontsize="9")
 
         # MotionRuntime
         c.node("mrt_label", "MotionRuntime", shape="plaintext", fontcolor=C_RUNTIME, fontsize="11")
@@ -729,8 +729,8 @@ def build_call_chain():
     dot.node("pathB", "🟡 路径 B (左): 无关键词 → LLM 意图理解 → 二次路由, ~100-500ms\n   例: 你好/介绍一下爱湫/往前走", shape="plaintext", fontcolor=C_LLM, fontsize="10")
 
     style_legend(dot)
-    dot.render(os.path.join(OUT_DIR, "07_调用链路全景图"), format="png", cleanup=True)
-    print("✓ 07_调用链路全景图.png")
+    dot.render(os.path.join(OUT_DIR, "00_调用链路全景图"), format="png", cleanup=True)
+    print("✓ 00_调用链路全景图.png")
 
 
 # ============================================================================

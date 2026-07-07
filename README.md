@@ -313,7 +313,7 @@ InteractionSkill.execute(intent, params)
 
 ### 5.3 调用链路全景（8 步全流程）
 
-![调用链路全景图](docs/images/07_调用链路全景图.png)
+![调用链路全景图](docs/images/00_调用链路全景图.png)
 
 > 从用户输入到 MQTT 指令的完整 8 步路由链，含具体代码行号、路径 A/B 分叉、Skill→MQTT 指令映射。建议初次阅读时先看这张图。
 
