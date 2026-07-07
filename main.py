@@ -9,8 +9,15 @@ Agent Runtime — 启动入口。
 
 架构:
     用户输入
-      → Gateway (路由中枢)
-        → Router (关键词 / LLM 路由)
+      → Gateway (路由中枢 + 治理)
+        → InputAdapter (多模态归一化)
+        → TraceLogger (链路追踪)
+        → SessionRouter (会话隔离)
+        → PriorityManager (优先级)
+        → SafetyGate (安全过滤)
+        → Router (YAML 规则匹配)
+        → ConflictResolver (冲突检测)
+        → RuntimeRouter (分发/二次路由)
           → Interaction Runtime (意图理解 → MQTT 指令)
           → Motion Runtime     (动作 / 移动 / 急停)
           → Navigation Runtime (导航 / 建图 / 定位)
@@ -18,7 +25,7 @@ Agent Runtime — 启动入口。
               → Skill (执行 → MQTT → Bridge → 机器人)
 
 各层职责:
-    Gateway:  接收、标准化、路由、二次分发
+    Gateway:  接收、标准化、路由、治理、安全、Trace
     Runtime:  编排所属 Agent
     Agent:    决策（调 LLM 做意图→MQTT映射）
     Skill:    执行（发 MQTT 指令）
@@ -53,8 +60,17 @@ from runtimes.motion_runtime import MotionRuntime
 from runtimes.interaction_runtime import InteractionRuntime
 from runtimes.navigation_runtime import NavigationRuntime
 
-# Gateway
+# Gateway & modules
 from gateway.gateway import Gateway
+from gateway.route_policy import RoutePolicy
+from gateway.input_adapter import InputAdapter
+from gateway.trace_logger import TraceLogger
+from gateway.session_router import SessionRouter
+from gateway.priority_manager import PriorityManager
+from gateway.safety_gate import SafetyGate
+from gateway.event_bus import EventBus
+from gateway.conflict_resolver import ConflictResolver
+from gateway.result_aggregator import ResultAggregator
 
 # ---------------------------------------------------------------------------
 # 配置
@@ -68,6 +84,15 @@ def load_config():
         path = os.path.join(BASE_DIR, "config.example.yaml")
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
+def load_yaml(path: str) -> dict:
+    """加载 YAML 文件，不存在则返回空 dict。"""
+    full_path = os.path.join(BASE_DIR, path)
+    if not os.path.exists(full_path):
+        return {}
+    with open(full_path, "r") as f:
+        return yaml.safe_load(f) or {}
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +124,62 @@ def build_app(cfg: dict):
     motion_rt = MotionRuntime(motion_agent)
     navigation_rt = NavigationRuntime(nav_agent)
 
+    # --- Gateway 配置 ---
+    gw_cfg = cfg.get("gateway", {})
+    routes_yaml = gw_cfg.get("routes_yaml", "config/routes.yaml")
+    modules_cfg = gw_cfg.get("modules", {})
+
+    # --- 加载路由策略 ---
+    route_policy = RoutePolicy()
+    route_path = os.path.join(BASE_DIR, routes_yaml)
+    if os.path.exists(route_path):
+        route_policy.load(route_path)
+    else:
+        logging.getLogger("main").warning(
+            f"路由配置文件不存在: {route_path}，使用默认路由"
+        )
+
+    # --- Gateway 模块（按配置开关） ---
+    trace_logger = TraceLogger()
+
+    session_router = None
+    if modules_cfg.get("session_router", True):
+        session_router = SessionRouter()
+
+    priority_manager = None
+    if modules_cfg.get("priority_manager", True):
+        priority_manager = PriorityManager()
+
+    safety_gate = None
+    if modules_cfg.get("safety_gate", True):
+        safety_gate = SafetyGate()
+
+    conflict_resolver = None
+    if modules_cfg.get("conflict_resolver", False):
+        conflict_resolver = ConflictResolver(
+            priority_manager=priority_manager,
+        )
+
+    event_bus = EventBus(enabled=modules_cfg.get("event_bus", False))
+    result_aggregator = ResultAggregator(
+        enabled=modules_cfg.get("result_aggregator", False),
+    )
+
     # --- Gateway ---
-    gateway = Gateway(interaction_rt, motion_rt, navigation_rt)
+    gateway = Gateway(
+        interaction_runtime=interaction_rt,
+        motion_runtime=motion_rt,
+        navigation_runtime=navigation_rt,
+        route_policy=route_policy,
+        input_adapter=InputAdapter(),
+        trace_logger=trace_logger,
+        session_router=session_router,
+        priority_manager=priority_manager,
+        safety_gate=safety_gate,
+        conflict_resolver=conflict_resolver,
+        event_bus=event_bus,
+        result_aggregator=result_aggregator,
+    )
 
     return gateway, mqtt
 
@@ -147,7 +226,7 @@ def run_demo_mode(gateway: Gateway):
     """演示模式：菜单选择 + 显示完整调用链路。"""
 
     print("\n" + "=" * 60)
-    print("  🤖 爱啾 Agent Runtime — 演示模式")
+    print("  🤖 Agent Runtime — 演示模式")
     print("=" * 60)
     print("  说明: 输入菜单编号 (1/2/3...)，或直接打字进入自由模式")
     print("  输入 'menu' 返回菜单 | 'q' 退出")
@@ -160,9 +239,8 @@ def run_demo_mode(gateway: Gateway):
         for i, (label, _, desc) in enumerate(DEMO_MENU):
             num = f"{i+1:2d}"
             item = f"{num}. {label}"
-            pad = col_width - len(item) % col_width
             # 中文占 2 字符宽，粗略补偿
-            visual_len = len(item) + sum(1 for c in item if '一' <= c <= '鿿' or '　' <= c <= '〿' or '＀' <= c <= '￯')
+            visual_len = len(item) + sum(1 for c in item if '一' <= c <= '鿿')
             pad = max(2, col_width - visual_len % col_width)
             end = "\n" if (i + 1) % 2 == 0 else ""
             print(f"  {item}{' ' * pad}{desc:20s}", end=end)
@@ -204,18 +282,20 @@ def run_demo_mode(gateway: Gateway):
             print(f"  🤖 回复: {result.reply}")
         if result.error:
             print(f"  ⚠️  错误: {result.error}")
-        if result.intent and result.intent not in ("chat", "unknown"):
+        if result.intent and result.intent not in ("chat", "unknown", "safety_blocked"):
             print(f"  📋 意图: {result.intent} | 数据: {result.data}")
+        if result.trace_id:
+            print(f"  🔍 trace: {result.trace_id[:8]}")
 
 
 def run_interactive_mode(gateway: Gateway):
     """交互模式：自由文本输入。"""
 
     print("\n" + "=" * 60)
-    print("  🤖 爱啾 Agent Runtime — 交互模式")
+    print("  🤖 Agent Runtime — 交互模式")
     print("=" * 60)
     print("  直接输入指令或对话: cqm1 | 前进 | 急停 | 四川话 | 换个表情 | 你好 ...")
-    print("  输入 /menu 进入菜单模式 | /q 退出")
+    print("  输入 /menu 进入菜单模式 | /trace 查看最近链路 | /q 退出")
     print("=" * 60 + "\n")
 
     while True:
@@ -227,6 +307,15 @@ def run_interactive_mode(gateway: Gateway):
             break
         if text.lower() == "/menu":
             return "menu"  # 切换到菜单模式
+        if text.lower() == "/trace":
+            traces = gateway.trace_logger.get_recent_traces(5)
+            if not traces:
+                print("(暂无 Trace 记录)")
+            for t in traces:
+                print(f"  🔍 {t['trace_id'][:8]}: 「{t['input']}」"
+                      f" → {len(t['events'])} events, {t.get('total_duration_ms', '?')}ms")
+            print()
+            continue
 
         result = gateway.handle_text(text)
         if result.reply:
@@ -265,10 +354,11 @@ def main():
     llm_cfg = cfg["llm"]
 
     print("\n" + "=" * 60)
-    print("  🤖 爱啾 Agent Runtime 已就绪")
+    print("  🤖 Agent Runtime 已就绪")
     print("=" * 60)
     print(f"  MQTT  → {mqtt_cfg['host']}:{mqtt_cfg['port']}")
     print(f"  LLM   → {llm_cfg['model']} @ {llm_cfg['base_url']}")
+    print(f"  Routes → {gateway._router._policy.pattern_count} 条路由规则")
     print("=" * 60)
 
     # 判断模式

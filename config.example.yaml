@@ -16,3 +16,21 @@ llm:
 
 # 日志级别: DEBUG / INFO / WARNING / ERROR
 log_level: "INFO"
+
+# --------------------------------------------------------------------------
+# Gateway 模块配置
+# --------------------------------------------------------------------------
+gateway:
+  # 路由策略 YAML 文件路径（相对 agent_demo 目录）
+  routes_yaml: "config/routes.yaml"
+
+  # 模块开关（false 则跳过该处理步骤）
+  modules:
+    input_adapter: true
+    session_router: true
+    priority_manager: true
+    safety_gate: true
+    trace_logger: true
+    conflict_resolver: true
+    event_bus: false             # Runtime 间事件通讯（Phase 3）
+    result_aggregator: false     # 多 Runtime 结果汇聚（Phase 3）

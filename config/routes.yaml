@@ -1,0 +1,147 @@
+# ============================================================================
+# Gateway 路由策略 — YAML 配置
+# ============================================================================
+#
+# 路由优先级：
+#   1. YAML 关键词命中 → 目标 Runtime，预填 action+params+priority
+#   2. 未命中 → default Runtime (interaction)，由 IntentAgent(LLM) 判断
+#
+# 匹配规则：最长关键词优先（"解除急停" > "急停" > "停"）
+#
+# 修改此文件后重启 agent_demo 即可生效，无需改代码。
+# ============================================================================
+
+routes:
+  # -----------------------------------------------------------------------
+  # emergency — 急停类，最高优先级，可抢占任何任务
+  # -----------------------------------------------------------------------
+  emergency:
+    runtime: motion
+    priority: emergency
+    patterns:
+      - keywords: ["急停", "停", "停下", "站住", "别动"]
+        action: stop
+        params: {}
+      - keywords: ["解除急停", "退出急停", "取消急停"]
+        action: release_estop
+        params: {}
+
+  # -----------------------------------------------------------------------
+  # motion — 动作、移动、运动模式、避障
+  # -----------------------------------------------------------------------
+  motion:
+    runtime: motion
+    priority: high
+    patterns:
+      # --- 预设动作 ---
+      - keywords: ["cqm1", "动作1"]
+        action: motion
+        params: {name: "cqm1"}
+      - keywords: ["cqm2", "动作2"]
+        action: motion
+        params: {name: "cqm2"}
+      - keywords: ["cqm3", "动作3"]
+        action: motion
+        params: {name: "cqm3"}
+      - keywords: ["做动作"]
+        action: motion
+        params: {name: "cqm1"}
+
+      # --- 遥控移动 ---
+      - keywords: ["前进", "往前走"]
+        action: move
+        params: {lx: 0.5, ly: 0.0, az: 0.0}
+      - keywords: ["后退", "往后走"]
+        action: move
+        params: {lx: -0.3, ly: 0.0, az: 0.0}
+      - keywords: ["左转", "向左转"]
+        action: move
+        params: {lx: 0.0, ly: 0.0, az: 0.5}
+      - keywords: ["右转", "向右转"]
+        action: move
+        params: {lx: 0.0, ly: 0.0, az: -0.5}
+      - keywords: ["走"]
+        action: move
+        params: {lx: 0.3, ly: 0.0, az: 0.0}
+
+      # --- 运动模式 ---
+      - keywords: ["站立"]
+        action: loco_mode
+        params: {mode: "stand"}
+      - keywords: ["趴下"]
+        action: loco_mode
+        params: {mode: "still"}
+      - keywords: ["起身"]
+        action: loco_mode
+        params: {mode: "getup"}
+      - keywords: ["小跑"]
+        action: loco_mode
+        params: {mode: "ppowalk"}
+
+      # --- 避障 ---
+      - keywords: ["开避障"]
+        action: oas
+        params: {enable: true}
+      - keywords: ["关避障"]
+        action: oas
+        params: {enable: false}
+
+  # -----------------------------------------------------------------------
+  # interaction — 音频、情绪、语音唤醒、设置
+  # -----------------------------------------------------------------------
+  interaction:
+    runtime: interaction
+    priority: normal
+    patterns:
+      # --- 音频播放 ---
+      - keywords: ["随机播放", "播放音频", "随机播"]
+        action: play_audio
+        params: {}
+      - keywords: ["播sch1", "四川话"]
+        action: play_audio
+        params: {name: "sch1"}
+      - keywords: ["播sch2"]
+        action: play_audio
+        params: {name: "sch2"}
+      - keywords: ["播pth1", "普通话"]
+        action: play_audio
+        params: {name: "pth1"}
+
+      # --- 情绪 ---
+      - keywords: ["换个表情", "切换情绪", "换个心情"]
+        action: switch_emotion
+        params: {}
+
+      # --- 语音唤醒 ---
+      - keywords: ["开语音唤醒", "打开语音交互"]
+        action: voice_wakeup
+        params: {enable: true}
+      - keywords: ["关语音唤醒", "关闭语音交互"]
+        action: voice_wakeup
+        params: {enable: false}
+
+      # --- 设置 ---
+      - keywords: ["音量", "设置音量"]
+        action: volume
+        params: {}
+      - keywords: ["氛围灯", "灯光"]
+        action: led
+        params: {}
+
+  # -----------------------------------------------------------------------
+  # navigation — 导航、建图、定位
+  # -----------------------------------------------------------------------
+  navigation:
+    runtime: navigation
+    priority: normal
+    patterns:
+      - keywords: ["带我去", "导航到", "导航", "前往", "去"]
+        action: navigate
+        params: {}
+
+# -----------------------------------------------------------------------
+# default — 所有未命中关键词的请求走 LLM 意图理解
+# -----------------------------------------------------------------------
+default:
+  runtime: interaction
+  priority: normal

@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
+import time
 import uuid
 
 
@@ -14,13 +15,22 @@ class RuntimeMessage:
     """Gateway 分发给 Runtime 的标准消息。
 
     无论输入来自文本、语音还是系统事件，都归一化为这个结构。
+
+    context 字段是 Gateway 和 Runtime/Agent 之间的核心契约：
+      - Router 预填 action + params
+      - IntentAgent(LLM) 结果也写入 context
+      - 下游 Agent 从 context 读取决策
     """
+
     message_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = "default"
     source: str = "user"          # user / system / robot_event
     input_type: str = "text"      # text / asr / event
     payload: dict = field(default_factory=dict)
     context: dict = field(default_factory=dict)
+    priority: str = "normal"      # emergency / high / normal / low
+    timestamp: float = field(default_factory=time.time)
 
     @classmethod
     def from_text(cls, text: str, session_id: str = "default") -> "RuntimeMessage":
@@ -37,8 +47,10 @@ class RuntimeMessage:
 @dataclass
 class RuntimeResult:
     """Runtime 返回给 Gateway 的标准结果。"""
+
     success: bool = True
     reply: str = ""
     intent: str = "unknown"
     data: dict = field(default_factory=dict)
     error: Optional[str] = None
+    trace_id: str = ""

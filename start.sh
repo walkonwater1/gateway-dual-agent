@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 爱啾 Agent Runtime — 一键启动脚本
+# Agent Runtime — 一键启动脚本
 #
 # 用法:
 #   chmod +x start.sh
@@ -32,7 +32,7 @@ info() { echo -e "  ${BLUE}→${NC} $1"; }
 print_banner() {
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║       🤖 爱啾 Agent Runtime — Demo Launcher      ║${NC}"
+    echo -e "${BOLD}║       🤖 Agent Runtime — Demo Launcher      ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
     echo ""
 }

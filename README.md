@@ -1,4 +1,4 @@
-# 爱啾 Agent Runtime — Demo
+# Agent Runtime — Demo
 
 基于 [docs/design/file_framework.md](docs/design/file_framework.md)
 + [docs/design/gateway_readme.md](docs/design/gateway_readme.md)
@@ -36,7 +36,7 @@
 
 | 层级 | 目录 | 职责 | 不负责 | 有无 LLM |
 |------|------|------|--------|----------|
-| **Gateway** | `gateway/` | 入口、标准化、路由、二次分发、结果汇合 | 不调 LLM、不做动作、不做决策 | ❌ |
+| **Gateway** | `gateway/` (12 文件) | 入口、标准化、路由、Session、优先级、安全、Trace、冲突仲裁、二次分发 | 不调 LLM、不做动作、不做决策 | ❌ |
 | **Runtime** | `runtimes/` | 编排所属 Agent、区分"直接执行"和"LLM 理解"两条路径 | 不直接操作硬件、不直接发 MQTT | ❌ |
 | **Agent** | `agents/` | 决策：调 LLM 做意图→MQTT映射、定参数 | 不直接发 MQTT | ✅ (仅 IntentAgent) |
 | **Skill** | `skills/` | 执行：将决策翻译为 MQTT 指令 | 不做决策、不判断 | ✅ |
@@ -88,6 +88,29 @@ class RuntimeResult:
 ```
 
 ### 4.2 完整时序流程图
+
+### 4.3 Gateway 处理链路（10 步）
+
+```
+输入事件
+  → InputAdapter      ★ 多模态归一化 (text/asr/robot_event)
+  → TraceLogger       ★ 生成 trace_id，记录全链路
+  → SessionRouter     ★ 获取/创建 Session，加载上下文
+  → PriorityManager   ★ 分配优先级 (emergency>high>normal>low)
+  → SafetyGate        ★ 请求级安全过滤 ("冲过去" 等)
+  → Router            ★ YAML 规则匹配 (54条, 最长关键词优先)
+      ├─ 命中 → 直接分发 (免LLM, <1ms)
+      └─ 未命中 → interaction (LLM理解)
+  → ConflictResolver  ★ 跨Runtime冲突检测 (抢占/排队/拒绝)
+  → RuntimeRouter     ★ 分发 + 二次路由
+  → ResultAggregator  ★ 多Runtime结果合并
+  → TraceLogger       ★ 记录结果, 完成trace
+  → 返回 RuntimeResult
+```
+
+> ★ 标记的模块均可通过 `config.example.yaml` → `gateway.modules` 开关控制。
+
+### 4.4 完整时序流程图
 
 ```
 用户输入文本
@@ -330,9 +353,19 @@ agent_demo/
 ├── step1_hello_mqtt.py           # 独立 MQTT 连通性测试（不依赖 LLM）
 ├── start.sh                      # 一键启动脚本（环境检查 + 依赖安装 + 启动）
 │
-├── gateway/                      # 中央路由层
-│   ├── gateway.py                # handle_text() 主入口 + _reroute 二次路由
-│   └── router.py                 # DIRECT_ROUTES 关键词表 + Router 最长匹配
+├── gateway/                      # 中央路由与治理中枢 (11/13 模块)
+│   ├── gateway.py                # 主入口 — 10步处理链路
+│   ├── input_adapter.py          # 多模态输入适配 (text/asr/robot_event)
+│   ├── router.py                 # 路由判断 — YAML关键词最长匹配
+│   ├── route_policy.py           # YAML路由策略加载器 (54条规则)
+│   ├── runtime_router.py         # Runtime注册/分发/二次路由
+│   ├── session_router.py         # 多用户Session隔离+历史
+│   ├── priority_manager.py       # 四级优先级 (emergency>high>normal>low)
+│   ├── safety_gate.py            # 请求级安全过滤
+│   ├── trace_logger.py           # 全链路trace记录 (10种事件)
+│   ├── conflict_resolver.py      # 跨Runtime冲突仲裁
+│   ├── event_bus.py              # pub/sub事件总线 (默认关闭)
+│   └── result_aggregator.py      # 多Runtime结果合并 (默认关闭)
 │
 ├── runtimes/                     # Runtime 编排层
 │   ├── interaction_runtime.py    # LLM 意图理解 → MQTT 指令（两条路径）
@@ -357,11 +390,15 @@ agent_demo/
 │       └── 高层 API: send_motion/send_move/send_estop/send_volume/...
 │
 ├── shared/                       # 公共协议
-│   ├── message.py                # RuntimeMessage / RuntimeResult
+│   ├── message.py                # RuntimeMessage / RuntimeResult (含trace_id/priority)
+│   ├── event.py                  # RuntimeEvent (navigation.progress等)
+│   ├── session.py                # Session数据类 (id/task/context/history)
 │   └── base.py                   # BaseAgent / BaseSkill 抽象基类
 │
-├── config.example.yaml           # 配置模板
-├── config.local.yaml             # 真实配置（git ignore）
+├── config/
+│   └── routes.yaml               # 54条YAML路由规则 (免改代码热更新)
+├── config.example.yaml           # 配置模板 (含gateway模块开关)
+├── config.local.yaml             # 真实配置 (git ignore)
 ├── .gitignore
 ├── requirements.txt              # paho-mqtt, openai, pyyaml
 └── README.md
@@ -462,15 +499,23 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 | 设计文档章节 | 对应代码 | 状态 |
 |------------|---------|------|
-| `gateway_readme.md` §4.1 gateway.py | `gateway/gateway.py` | ✅ 薄中枢原则 |
+| `gateway_readme.md` §4.1 gateway.py | `gateway/gateway.py` | ✅ 10步处理链路 |
+| `gateway_readme.md` §4.2 input_adapter.py | `gateway/input_adapter.py` | ✅ text/asr/robot_event |
 | `gateway_readme.md` §4.3 message_normalizer.py | `shared/message.py` | ✅ RuntimeMessage/RuntimeResult |
 | `gateway_readme.md` §4.4 router.py | `gateway/router.py` | ✅ 关键词 + 最长匹配 |
-| `gateway_readme.md` §4.5 route_policy.py | `gateway/router.py` (DIRECT_ROUTES) | ⚠️ 写死在代码中，未 YAML 化 |
-| `gateway_readme.md` §4.6 runtime_router.py | `gateway/gateway.py` (`_runtimes` dict) | ✅ |
+| `gateway_readme.md` §4.5 route_policy.py | `gateway/route_policy.py` + `config/routes.yaml` | ✅ YAML化, 54条规则 |
+| `gateway_readme.md` §4.6 runtime_router.py | `gateway/runtime_router.py` | ✅ 注册/分发/二次路由 |
+| `gateway_readme.md` §4.7 session_router.py | `gateway/session_router.py` | ✅ 多session隔离 |
+| `gateway_readme.md` §4.8 priority_manager.py | `gateway/priority_manager.py` | ✅ 四级优先级 |
+| `gateway_readme.md` §4.9 safety_gate.py | `gateway/safety_gate.py` | ✅ 请求级安全过滤 |
+| `gateway_readme.md` §4.10 conflict_resolver.py | `gateway/conflict_resolver.py` | ✅ 跨Runtime仲裁 |
+| `gateway_readme.md` §4.11 event_bus.py | `gateway/event_bus.py` | ✅ pub/sub (默认关闭) |
+| `gateway_readme.md` §4.12 result_aggregator.py | `gateway/result_aggregator.py` | ✅ 多结果合并 (默认关闭) |
+| `gateway_readme.md` §4.13 trace_logger.py | `gateway/trace_logger.py` | ✅ trace_id全链路 |
 | `gateway_readme.md` §5 Gateway MVP | 整个 agent_demo | ✅ |
 | `IMPLEMENTATION_ROADMAP.md` Phase 1 | 全部文件 | ✅ MVP 链路完成 |
-| `IMPLEMENTATION_ROADMAP.md` Phase 2 | `router.py` + 三 Runtime | ⚠️ Navigation 占位，状态感知未实现 |
-| `IMPLEMENTATION_ROADMAP.md` Phase 3 | — | ❌ Session/Priority/Safety/Trace 全未开始 |
+| `IMPLEMENTATION_ROADMAP.md` Phase 2 | YAML路由 + 三Runtime | ✅ 路由YAML化完成, Navigation占位, 状态感知未实现 |
+| `IMPLEMENTATION_ROADMAP.md` Phase 3 | 治理模块 | ✅ 全部8模块已实现 (2个默认关闭) |
 | `IMPLEMENTATION_ROADMAP.md` Phase 4 | — | ❌ Knowledge/Memory/Harness 全未开始 |
 
 ---
@@ -491,13 +536,15 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 | 限制 | 说明 | 计划 |
 |------|------|------|
-| 无 Session 隔离 | 所有输入走 default_session | Phase 3 |
-| 无优先级仲裁 | "停"和"前进"同时到达无仲裁 | Phase 3 |
-| 无 Safety Gate | 不拦截"冲过去"等危险指令 | Phase 3 |
-| 无 Trace 记录 | 无链路追踪 | Phase 3 |
+| ~~无 Session 隔离~~ | ~~所有输入走 default_session~~ | ✅ 已实现 |
+| ~~无优先级仲裁~~ | ~~"停"和"前进"同时到达无仲裁~~ | ✅ 已实现 |
+| ~~无 Safety Gate~~ | ~~不拦截"冲过去"等危险指令~~ | ✅ 已实现 |
+| ~~无 Trace 记录~~ | ~~无链路追踪~~ | ✅ 已实现 |
+| ~~路由表硬编码~~ | ~~DIRECT_ROUTES 在代码中~~ | ✅ 已YAML化 |
 | 无对话记忆 | 每次对话独立，无上下文 | Phase 4 |
-| 路由表硬编码 | DIRECT_ROUTES 在代码中，未 YAML 化 | Phase 2 |
 | 无 MQTT 状态反馈 | 订阅了 info/often 但未利用 | Phase 2 |
+| Navigation 占位 | 导航仅发 MQTT 6001，无回传 | Phase 2 |
+| EventBus/ResultAggregator 默认关闭 | 需按场景启用 | Phase 3 |
 
 ---
 
@@ -505,17 +552,18 @@ python step1_hello_mqtt.py --host 机器人IP --cmd 1006 --data cqm1
 
 ```
 Phase 1 ✅  MVP 链路     text→Gateway→Runtime→Agent→Skill→MQTT→机器人
-Phase 2 ⏳  完善          Navigation 充实 + 路由 YAML 化 + 状态闭环
-Phase 3 ❌  治理          Session/Priority/Safety/Trace/Conflict
+Phase 2 ✅  路由 YAML 化  54条规则可配置, Gateway 11/13模块
+Phase 3 ✅  治理          Session/Priority/Safety/Trace/Conflict 全部实现
 Phase 4 ❌  智能          Knowledge(RAG) + Memory(四层) + Harness(回放)
 ```
 
 短期内优先：
-1. **确认机器人实际动作名** → 更新 DIRECT_ROUTES 和 DEMO_MENU
+1. **确认机器人实际动作名** → 更新 routes.yaml 和 DEMO_MENU
 2. **排查 `eir/setting` topic** → 确认 Bridge 转发是否正确
 3. **验证移动链路** → `前进`/`后退`/`左转`/`右转` 端到端
 4. **验证急停链路** → `停` 端到端
-5. **路由表 YAML 化** → 不写死在 Python 代码中
+5. **启用 EventBus** → Navigation 进度 → Interaction 播报
+6. **Navigation Runtime 充实** → 导航状态查询+回传
 
 ---
 

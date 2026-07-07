@@ -1,124 +1,82 @@
 """
-路由策略 — 关键词匹配 → 选 Runtime。
+路由策略 — YAML 配置化关键词匹配 → 选 Runtime。
 
-真实能力来源: Bridge API 协议文档 v0.3。
+对应设计文档 gateway/router.py + gateway/route_policy.py。
 
 路由优先级:
-  1. 关键词命中 → Motion / Navigation，预填 action+params
-  2. 未命中 → Interaction Runtime，由 IntentAgent(LLM) 判断
+  1. YAML 关键词命中 → 目标 Runtime，预填 action+params+priority
+  2. 未命中 → default Runtime (interaction)，由 IntentAgent(LLM) 判断
+
+匹配规则：RoutePolicy 内部按关键词长度降序排列，首个命中即返回（最长匹配）。
 """
 
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass
 
 from shared.message import RuntimeMessage
+from gateway.route_policy import RoutePolicy, RouteMatch
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# 关键词 → (目标Runtime, action, params)
-# ---------------------------------------------------------------------------
-DIRECT_ROUTES = [
-    # ====== 解除急停（优先） ======
-    ("解除急停", ("motion", "release_estop", {})),
-    ("退出急停", ("motion", "release_estop", {})),
-    ("取消急停", ("motion", "release_estop", {})),
+@dataclass
+class RouteResult:
+    """路由结果 — 比 RouteMatch 多带了原始 message 引用。"""
+    runtime: str
+    action: str = ""
+    params: dict | None = None
+    priority: str = "normal"
+    keyword: str = ""
 
-    # ====== 急停 ======
-    ("急停",   ("motion", "stop", {})),
-    ("停",     ("motion", "stop", {})),
-    ("停下",   ("motion", "stop", {})),
-    ("站住",   ("motion", "stop", {})),
-    ("别动",   ("motion", "stop", {})),
-
-    # ====== 动作 (cqm1/cqm2/cqm3) ======
-    ("动作1",  ("motion", "motion", {"name": "cqm1"})),
-    ("动作2",  ("motion", "motion", {"name": "cqm2"})),
-    ("动作3",  ("motion", "motion", {"name": "cqm3"})),
-    ("cqm1",   ("motion", "motion", {"name": "cqm1"})),
-    ("cqm2",   ("motion", "motion", {"name": "cqm2"})),
-    ("cqm3",   ("motion", "motion", {"name": "cqm3"})),
-    ("做动作", ("motion", "motion", {"name": "cqm1"})),
-
-    # ====== 移动 ======
-    ("前进",   ("motion", "move", {"lx": 0.5})),
-    ("往前走", ("motion", "move", {"lx": 0.5})),
-    ("后退",   ("motion", "move", {"lx": -0.3})),
-    ("往后走", ("motion", "move", {"lx": -0.3})),
-    ("左转",   ("motion", "move", {"az": 0.5})),
-    ("向左转", ("motion", "move", {"az": 0.5})),
-    ("右转",   ("motion", "move", {"az": -0.5})),
-    ("向右转", ("motion", "move", {"az": -0.5})),
-    ("走",     ("motion", "move", {"lx": 0.3})),
-
-    # ====== 运动模式 ======
-    ("站立",   ("motion", "loco_mode", {"mode": "stand"})),
-    ("趴下",   ("motion", "loco_mode", {"mode": "still"})),
-    ("起身",   ("motion", "loco_mode", {"mode": "getup"})),
-    ("小跑",   ("motion", "loco_mode", {"mode": "ppowalk"})),
-
-    # ====== 避障 ======
-    ("开避障", ("motion", "oas", {"enable": True})),
-    ("关避障", ("motion", "oas", {"enable": False})),
-
-    # ====== 音频（通过 Interaction Runtime 的 InteractionSkill） ======
-    ("随机播",    ("interaction", "play_audio", {})),
-    ("播放音频",  ("interaction", "play_audio", {})),
-    ("播sch1",    ("interaction", "play_audio", {"name": "sch1"})),
-    ("播sch2",    ("interaction", "play_audio", {"name": "sch2"})),
-    ("播pth1",    ("interaction", "play_audio", {"name": "pth1"})),
-    ("四川话",    ("interaction", "play_audio", {"name": "sch1"})),
-    ("普通话",    ("interaction", "play_audio", {"name": "pth1"})),
-
-    # ====== 情绪 ======
-    ("换个表情",  ("interaction", "switch_emotion", {})),
-    ("切换情绪",  ("interaction", "switch_emotion", {})),
-    ("换个心情",  ("interaction", "switch_emotion", {})),
-
-    # ====== 语音交互 ======
-    ("开语音唤醒",   ("interaction", "voice_wakeup", {"enable": True})),
-    ("关语音唤醒",   ("interaction", "voice_wakeup", {"enable": False})),
-    ("打开语音交互", ("interaction", "voice_wakeup", {"enable": True})),
-    ("关闭语音交互", ("interaction", "voice_wakeup", {"enable": False})),
-
-    # ====== 设置 ======
-    ("音量",       ("interaction", "volume", {})),
-    ("设置音量",   ("interaction", "volume", {})),
-    ("氛围灯",     ("interaction", "led", {})),
-    ("灯光",       ("interaction", "led", {})),
-
-    # ====== 导航 ======
-    ("导航",   ("navigation", "navigate", {})),
-    ("带我去", ("navigation", "navigate", {})),
-    ("前往",   ("navigation", "navigate", {})),
-    ("去",     ("navigation", "navigate", {})),
-]
+    def __post_init__(self):
+        if self.params is None:
+            self.params = {}
 
 
 class Router:
-    """Router：输入文本 → 目标 Runtime + context。
+    """Router：输入文本 → 目标 Runtime + context + priority。
 
-    最大匹配原则：长关键词优先（"解除急停" > "急停" > "停"）。
+    最大匹配原则（由 RoutePolicy 保证）：长关键词优先
+    （"解除急停" > "急停" > "停"）。
+
+    用法:
+        policy = RoutePolicy("config/routes.yaml")
+        router = Router(policy)
+        runtime_name = router.route(message)  # 返回 "motion"
+        # message.context 已被填充 action + params
+        # message.priority 已被设置
     """
 
+    def __init__(self, route_policy: RoutePolicy | None = None):
+        self._policy = route_policy or RoutePolicy()
+
     def route(self, message: RuntimeMessage) -> str:
+        """对消息进行路由判断，写入 context 和 priority。
+
+        Args:
+            message: 待路由的消息（原地修改 context / priority）
+
+        Returns:
+            目标 Runtime 名称: "interaction" | "motion" | "navigation"
+        """
         text = message.text
+        match = self._policy.match(text)
 
-        # 找最长匹配
-        best_match = None
-        best_len = 0
-        for keyword, (runtime, action, params) in DIRECT_ROUTES:
-            if keyword in text and len(keyword) > best_len:
-                best_match = (keyword, runtime, action, params)
-                best_len = len(keyword)
+        if match:
+            message.context["action"] = match.action
+            message.context["params"] = match.params
+            message.priority = match.priority
+            logger.info(
+                f"Router: 「{text}」→ {match.runtime} "
+                f"(关键词:「{match.keyword}」 action={match.action} "
+                f"priority={match.priority})"
+            )
+            return match.runtime
 
-        if best_match:
-            keyword, runtime, action, params = best_match
-            message.context["action"] = action
-            message.context["params"] = params
-            logger.info(f"Router: 「{text}」→ {runtime} "
-                        f"(关键词:「{keyword}」 action={action})")
-            return runtime
-
-        logger.info(f"Router: 「{text}」→ interaction (LLM 理解)")
-        return "interaction"
+        # 未命中 → 默认路由（interaction + LLM 理解）
+        default = self._policy.get_default()
+        message.priority = default.priority
+        logger.info(f"Router: 「{text}」→ {default.runtime} (LLM 理解)")
+        return default.runtime

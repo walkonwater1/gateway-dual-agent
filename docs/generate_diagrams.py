@@ -86,12 +86,12 @@ def build_architecture():
     dot.node("user", "👤 用户输入\n(文本/语音)", shape="plaintext", fontsize="14",
              fontcolor=C_TITLE)
 
-    # Gateway 层
+    # Gateway 层 — 完整治理中枢
     with dot.subgraph(name="cluster_gateway") as c:
-        c.attr(label="Gateway 路由中枢", style="rounded,dashed",
+        c.attr(label="Gateway 路由与治理中枢 (11/13 模块)", style="rounded,dashed",
                fontcolor=C_GATEWAY, fontsize="13", color=C_GATEWAY, bgcolor="#161B22")
-        c.node("gw", "Gateway.handle_text()\n────────\n① 封装 RuntimeMessage\n② Router 路由选 Runtime\n③ 首次分发 + 二次路由", shape="box", fillcolor=C_GATEWAY)
-        c.node("router", "Router\n────────\n关键词最长匹配\n→ 预填 action+params\n→ 直连 Runtime", shape="box", fillcolor=C_GATEWAY)
+        c.node("gw", "Gateway.handle_text()\n────────\n① InputAdapter 多模态归一化\n② TraceLogger 生成trace_id\n③ SessionRouter 会话隔离\n④ PriorityManager 四级优先级\n⑤ SafetyGate 请求安全过滤\n⑥ Router YAML规则匹配(54条)\n⑦ ConflictResolver 冲突仲裁\n⑧ RuntimeRouter 分发+二次路由\n⑨ ResultAggregator 结果合并\n⑩ TraceLogger 记录结果", shape="box", fillcolor=C_GATEWAY)
+        c.node("router", "Router + RoutePolicy\n────────\nYAML 54条规则\n最长关键词匹配\n→ 预填 action+params→ 免LLM直连", shape="box", fillcolor=C_GATEWAY)
 
     # Runtimes
     with dot.subgraph(name="cluster_runtimes") as c:
