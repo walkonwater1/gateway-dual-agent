@@ -66,12 +66,19 @@ print_banner
 echo -e "${BOLD}[1/5] Python 环境${NC}"
 
 PYTHON=""
-for py in python3 python; do
-    if command -v "$py" &>/dev/null; then
-        PYTHON="$py"
-        break
-    fi
-done
+# 优先使用项目虚拟环境
+VENV_PY="$SCRIPT_DIR/.venv/bin/python"
+if [ -x "$VENV_PY" ]; then
+    PYTHON="$VENV_PY"
+fi
+if [ -z "$PYTHON" ]; then
+    for py in python3 python; do
+        if command -v "$py" &>/dev/null; then
+            PYTHON="$py"
+            break
+        fi
+    done
+fi
 
 if [ -z "$PYTHON" ]; then
     fail "未找到 Python，请安装 Python >= 3.10"
@@ -220,4 +227,8 @@ DEMO_ARG=""
 if $DEMO_MODE; then
     DEMO_ARG="--demo"
 fi
-exec "$PYTHON" main.py $DEMO_ARG
+MOCK_ARG=""
+if $MOCK_MODE; then
+    MOCK_ARG="--mock"
+fi
+exec "$PYTHON" main.py $DEMO_ARG $MOCK_ARG

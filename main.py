@@ -49,7 +49,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 from openai import OpenAI
 
-from capabilities.mqtt_client import RobotMqttClient
+from capabilities.mqtt_client import RobotMqttClient, MockMqttClient
 
 # Skills
 from skills.motion_skill import MotionSkill
@@ -105,11 +105,14 @@ def load_yaml(path: str) -> dict:
 # ---------------------------------------------------------------------------
 # 组装（依赖注入）
 # ---------------------------------------------------------------------------
-def build_app(cfg: dict):
+def build_app(cfg: dict, mock: bool = False):
     """手动组装整个应用 — 相当于轻量 DI 容器。"""
 
     # --- 能力层 ---
-    mqtt = RobotMqttClient(cfg["mqtt"]["host"], cfg["mqtt"]["port"])
+    if mock:
+        mqtt = MockMqttClient(cfg["mqtt"]["host"], cfg["mqtt"]["port"])
+    else:
+        mqtt = RobotMqttClient(cfg["mqtt"]["host"], cfg["mqtt"]["port"])
 
     # --- LLM ---
     llm_cfg = cfg["llm"]
@@ -376,7 +379,20 @@ def run_interactive_mode(gateway: Gateway):
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
+def _probe_mqtt(host: str, port: int, timeout: float = 2.0) -> bool:
+    """快速探测 MQTT broker 是否可达。"""
+    import socket
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
 def main():
+    force_mock = "--mock" in sys.argv
+
     cfg = load_config()
 
     # 日志
@@ -387,15 +403,30 @@ def main():
     )
     logger = logging.getLogger("main")
 
-    logger.info("正在启动 Agent Runtime...")
-    gateway, mqtt, event_watcher = build_app(cfg)
+    mqtt_host = cfg["mqtt"]["host"]
+    mqtt_port = cfg["mqtt"]["port"]
 
-    # 连接 MQTT
+    # --- 决定使用真实 MQTT 还是 mock ---
+    mock_mode = force_mock
+    if not force_mock:
+        if _probe_mqtt(mqtt_host, mqtt_port):
+            logger.info("MQTT broker 可达，使用真实连接")
+        else:
+            logger.warning(f"MQTT broker {mqtt_host}:{mqtt_port} 不可达，自动降级为离线模式")
+            mock_mode = True
+
+    if mock_mode:
+        logger.info("正在启动 Agent Runtime [离线模式]...")
+    else:
+        logger.info("正在启动 Agent Runtime...")
+    gateway, mqtt, event_watcher = build_app(cfg, mock=mock_mode)
+
+    # 连接 MQTT（mock 模式直接返回 True）
     if not mqtt.connect():
-        logger.error("MQTT 连接失败，请检查机器人是否在线 (config.local.yaml → mqtt.host)")
-        print("\n✗ MQTT 连接失败！请确认:")
-        print(f"  机器人 IP: {cfg['mqtt']['host']}:{cfg['mqtt']['port']}")
-        print(f"  mosquitto 是否在运行？Bridge 是否在运行？\n")
+        # 理论上不会到这里（已通过 probe 或 mock），保留作为兜底
+        logger.error("MQTT 连接失败（probe 通过但实际连不上）")
+        print(f"\n✗ MQTT 连接失败！{mqtt_host}:{mqtt_port}")
+        print(f"  使用 --mock 强制离线模式: python main.py --mock\n")
         sys.exit(1)
 
     # 注册 MQTT 状态回调 → EventWatcher
@@ -410,9 +441,15 @@ def main():
     llm_cfg = cfg["llm"]
 
     print("\n" + "=" * 60)
-    print("  🤖 Agent Runtime 已就绪")
+    if mock_mode:
+        print("  🤖 Agent Runtime 已就绪 [离线模式]")
+    else:
+        print("  🤖 Agent Runtime 已就绪")
     print("=" * 60)
-    print(f"  MQTT  → {mqtt_cfg['host']}:{mqtt_cfg['port']}")
+    mqtt_label = f"{mqtt_cfg['host']}:{mqtt_cfg['port']}"
+    if mock_mode:
+        mqtt_label += " (mock)"
+    print(f"  MQTT  → {mqtt_label}")
     print(f"  LLM   → {llm_cfg['model']} @ {llm_cfg['base_url']}")
     print(f"  Routes → {gateway.pattern_count} 条路由规则")
     if gateway.event_bus.enabled:

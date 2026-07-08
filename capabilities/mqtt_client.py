@@ -371,3 +371,95 @@ class RobotMqttClient:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+
+# ============================================================================
+# Mock 客户端 — 离线开发/测试用，不依赖真实机器人
+# ============================================================================
+class MockMqttClient:
+    """Mock MQTT 客户端，所有 send_* 方法仅打印日志，不发任何网络请求。"""
+
+    def __init__(self, broker_host: str = "127.0.0.1", broker_port: int = 8899):
+        self._host = broker_host
+        self._port = broker_port
+        self._connected = False
+        self._on_status = None
+        self._logger = logging.getLogger("mock_mqtt")
+
+    def connect(self) -> bool:
+        self._connected = True
+        self._logger.info(f"[MOCK] MQTT 已连接（离线模式）→ {self._host}:{self._port}")
+        return True
+
+    def disconnect(self):
+        self._connected = False
+        self._logger.info("[MOCK] MQTT 已断开")
+
+    def on_status(self, callback):
+        self._on_status = callback
+
+    def send_command(self, cmd_id: int, command_data=None, qos: int = None) -> str:
+        msg_uuid = str(uuid.uuid4())
+        topic, default_qos = _route(cmd_id)
+        if qos is None:
+            qos = default_qos
+        data_str = json.dumps(command_data, ensure_ascii=False)[:80] if command_data is not None else "None"
+        self._logger.info(f"[MOCK] → [{topic}] cmd={cmd_id} data={data_str}")
+        return msg_uuid
+
+    def send_motion(self, name: str) -> str:
+        return self.send_command(CMD_ACTION, name)
+
+    def send_move(self, linear_x: float, linear_y: float = 0.0,
+                  angular_z: float = 0.0, swing_height: float = 0.1,
+                  gait_period: float = 0.5, keep_trotting: bool = False) -> str:
+        return self.send_command(CMD_MOVE, [linear_x, linear_y, angular_z, swing_height, gait_period])
+
+    def send_loco_mode(self, mode) -> str:
+        return self.send_command(CMD_LOCO_MODE, mode)
+
+    def send_gait(self, gait) -> str:
+        return self.send_command(CMD_GAIT, gait)
+
+    def send_body_height(self, height: float) -> str:
+        return self.send_command(CMD_BODY_HEIGHT, height)
+
+    def send_oas(self, enable: bool) -> str:
+        return self.send_command(CMD_OAS, 0 if enable else 1)
+
+    def send_uwb(self, enable: bool) -> str:
+        return self.send_command(CMD_UWB, 1 if enable else 0)
+
+    def send_body_orientation(self, roll: float, pitch: float) -> str:
+        return self.send_command(CMD_BODY_ORIENTATION, {"roll": roll, "pitch": pitch})
+
+    def send_corpus(self, data) -> str:
+        return self.send_command(CMD_CORPUS, data)
+
+    def send_estop(self, enable: bool = True) -> str:
+        return self.send_command(CMD_SOFT_ESTOP, "1" if enable else "0")
+
+    def send_navigation(self, params: dict) -> str:
+        return self.send_command(CMD_NAVIGATION, params)
+
+    def send_led(self, rgb: list, brightness: int, duty_cycle: int, period: int) -> str:
+        return self.send_command(CMD_SETTING_LED, {
+            "ambient_light": {"rgb": rgb, "brightness": brightness,
+                              "duty_cycle": duty_cycle, "period": period}
+        })
+
+    def send_volume(self, volume: int) -> str:
+        return self.send_command(CMD_SETTING_VOLUME, {"audio": {"output": {"volume": volume}}})
+
+    def send_welcome(self, greeting: str) -> str:
+        return self.send_command(CMD_SETTING_WELCOME, {"interaction": {"wakeup": {"greetings": greeting}}})
+
+    def send_face_adjust(self, value: float) -> str:
+        return self.send_command(CMD_FACE_ADJUST, value)
+
+    def send_heartbeat(self) -> str:
+        return self.send_command(CMD_HEARTBEAT, None)
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
